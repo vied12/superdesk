@@ -1,3 +1,4 @@
+
 var post = require('./helpers/fixtures').post;
 var openUrl = require('./helpers/utils').open;
 
@@ -11,7 +12,8 @@ describe('Users', function() {
                 'first_name': 'foo',
                 'last_name': 'bar',
                 'username': 'spam',
-                'email': 'foo@bar.com'
+                'email': 'foo@bar.com',
+                'sign_off': 'foobar'
             }
         }, done);
     });
@@ -25,6 +27,7 @@ describe('Users', function() {
             expect(modelValue('user.first_name')).toBe('first name');
             expect(modelValue('user.last_name')).toBe('last name');
             expect(modelValue('user.email')).toBe('a@a.com');
+            expect(modelValue('user.sign_off')).toBe('');
         });
     });
 
@@ -38,16 +41,23 @@ describe('Users', function() {
             expect(element(by.repeater('user in users').row(0).column('username')).getText()).toBe('test_user');
         });
 
+        it('list online users', function() {
+            element(by.id('online_users')).click();
+            expect(element.all(by.repeater('user in users')).count()).toBe(2);
+            expect(element(by.repeater('user in users').row(0).column('username')).getText()).toBe('test_user');
+            expect(element(by.repeater('user in users').row(1).column('username')).getText()).toBe('admin');
+        });
+
         xit('can disable user', function() {
             var user = element.all(by.repeater('users')).first(),
                 activity = user.element(by.className('icon-trash'));
 
             user.waitReady()
                 .then(function(elem) {
-                  return browser.actions().mouseMove(elem).perform();
+                    return browser.actions().mouseMove(elem).perform();
                 })
                 .then(function() {
-                  activity.waitReady().then(function(elem) { elem.click(); });
+                    activity.waitReady().then(function(elem) { elem.click(); });
                 });
 
             element(by.css('.modal-dialog')).waitReady().then(function(elem) {
@@ -111,40 +121,62 @@ describe('Users', function() {
     describe('user edit:', function() {
         beforeEach(function(done) {
             openUrl('/#/users').then(function() {
-                return element(by.repeater('user in users').row(1).column('username'))
+                return element(by.repeater('user in users').row(0).column('username'))
                     .waitReady();
-                }).then(function(elem) {
-                    return elem.click();
-                }).then(function() {
-                    return $('#open-user-profile')
-                        .waitReady();
-                }).then(function(elem) {
-                    return elem.click();
-                }).then(done);
+            }).then(function(elem) {
+                return elem.click();
+            }).then(function() {
+                return $('#open-user-profile').waitReady();
+            }).then(function(elem) {
+                return elem.click();
+            }).then(done);
         });
 
         it('can enable/disable buttons based on form status', function() {
             var buttonSave = element(by.id('save-edit-btn'));
             var buttonCancel = element(by.id('cancel-edit-btn'));
             var inputFirstName = element(by.model('user.first_name'));
+            var inputSignOff = element(by.model('user.sign_off'));
 
             expect(buttonSave.isEnabled()).toBe(false);
             expect(buttonCancel.isEnabled()).toBe(false);
 
-            inputFirstName.sendKeys('X');
-            expect(inputFirstName.getAttribute('value')).toBe('first nameX');
+            inputSignOff.sendKeys('X');
+            expect(inputSignOff.getAttribute('value')).toBe('X');
 
             browser.sleep(200);
             expect(buttonSave.isEnabled()).toBe(true);
             expect(buttonCancel.isEnabled()).toBe(true);
 
             inputFirstName.clear();
+            inputSignOff.clear();
             inputFirstName.sendKeys('first name');
             expect(inputFirstName.getAttribute('value')).toBe('first name');
 
             browser.sleep(200);
             expect(buttonSave.isEnabled()).toBe(false);
             expect(buttonCancel.isEnabled()).toBe(false);
+        });
+    });
+
+    describe('default desk field should not be visible', function() {
+        beforeEach(function(done) {
+            openUrl('/#/users').then(done);
+        });
+
+        it('while creating a new user', function() {
+            var buttonCreate = element(by.className('sd-create-btn'));
+
+            buttonCreate.click();
+            expect(browser.driver.isElementPresent(by.id('user_default_desk'))).toBe(false);
+        });
+
+        it('while pre-viewing and user clicks on create new user', function() {
+            var buttonCreate = element(by.className('sd-create-btn'));
+            element.all(by.repeater('users')).first().click();
+
+            buttonCreate.click();
+            expect(browser.driver.isElementPresent(by.id('user_default_desk'))).toBe(false);
         });
     });
 

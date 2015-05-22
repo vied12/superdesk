@@ -1,18 +1,34 @@
 cat <<EOF
 mongodb:
-  image: dockerfile/mongodb
+  image: mongo:2.6
   volumes:
    - ../data/mongodb:/data/db
 
 redis:
-  image: dockerfile/redis
+  image: redis:2.8
   volumes:
    - ../data/redis:/data
 
-elastic:
-  image: dockerfile/elasticsearch
+logstash:
+  image: logstash
+  command: logstash -f /usr/share/logstash/logstash.conf
+  links:
+  - elastic
   volumes:
-   - ../data/elastic:/data
+  - logstash:/usr/share/logstash
+
+kibana:
+  build: kibana
+  restart: always
+  links:
+  - elastic
+  ports:
+  - "5601:5601"
+
+elastic:
+  image: elasticsearch:1.5
+  volumes:
+   - ../data/elastic:/usr/share/elasticsearch/data
 
 backend:
   build: ../server
@@ -21,13 +37,16 @@ backend:
    - mongodb
    - redis
    - elastic
+   - logstash
   environment:
    - MONGOLAB_URI=mongodb://mongodb:27017/test
-   - LEGAL_ARCHIVEDB_PORT=mongodb://mongodb:27017
+   - LEGAL_ARCHIVE_URI=mongodb://mongodb:27017/test
    - ELASTICSEARCH_URL=http://elastic:9200
    - ELASTICSEARCH_INDEX
    - CELERY_BROKER_URL=redis://redis:6379/1
    - REDIS_URL=redis://redis:6379/1
+   - LOG_SERVER_ADDRESS=logstash
+   - LOG_SERVER_PORT=5555
    - AMAZON_ACCESS_KEY_ID
    - AMAZON_CONTAINER_NAME
    - AMAZON_REGION

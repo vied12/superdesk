@@ -37,6 +37,12 @@ desks_schema = {
     'incoming_stage': Resource.rel('stages', True),
     'spike_expiry': {
         'type': 'integer'
+    },
+    'source': {
+        'type': 'string'
+    },
+    'published_item_expiry': {
+        'type': 'integer'
     }
 }
 

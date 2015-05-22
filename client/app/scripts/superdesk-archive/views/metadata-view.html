@@ -21,7 +21,7 @@
     </dl>
 
     <dl ng-if="item.firstcreated">
-        <dt translate>First Created</dt>
+        <dt translate>Created</dt>
         <dd sd-reldate-complex ng-model="item.firstcreated"></dd>
     </dl>
     <dl ng-if="item.versioncreated">
@@ -32,13 +32,13 @@
         <dt translate>Expiry</dt>
         <dd sd-reldate-complex ng-model="item.expiry"></dd>
     </dl>
-    <dl ng-if="original_creator">
+    <dl ng-if="originalCreator">
         <dt translate>Original creator</dt>
-        <dd>{{ original_creator }}</dd>
+        <dd>{{ originalCreator }}</dd>
     </dl>
-    <dl ng-if="version_creator">
+    <dl ng-if="versionCreator">
         <dt translate>Version creator</dt>
-        <dd>{{ version_creator }}</dd>
+        <dd>{{ versionCreator }}</dd>
     </dl>
 
     <!-- ingest details -->
@@ -46,9 +46,9 @@
         <dt translate>Original source</dt>
         <dd>{{ item.original_source }}</dd>
     </dl>
-    <dl ng-if="item.ingest_provider">
-        <dt translate>Ingest provider</dt>
-        <dd sd-meta-ingest data-provider="item.ingest_provider"></dd>
+    <dl>
+        <dt translate>Source</dt>
+        <dd sd-meta-ingest data-item="item"></dd>
     </dl>
     <dl ng-if="item.ingest_provider_sequence">
         <dt translate>Ingest provider sequence</dt>
@@ -136,6 +136,20 @@
     <dl ng-if="item.located">
         <dt translate>Location</dt>
         <dd>{{ item.located }}</dd>
+    </dl>
+
+    <!-- publish data -->
+    <dl ng-if="destinationGroups">
+        <dt translate>Destination Groups</dt>
+        <dd ng-repeat="destinationGroup in destinationGroups">
+            {{destinationGroup.name}}
+        </dd>
+    </dl>
+
+    <!-- publish schedule data -->
+    <dl ng-if="item.publish_schedule">
+        <dt translate>Publish Schedule</dt>
+        <dd sd-reldate-complex ng-model="item.publish_schedule"></dd>
     </dl>
 
     <!-- file specific data -->

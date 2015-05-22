@@ -20,6 +20,16 @@ Feature: News Items Archive
         """
 
     @auth
+    Scenario: Don't get published archive item by guid
+        Given "archive"
+        """
+        [{"guid": "tag:example.com,0000:newsml_BRE9A605", "state": "published"}]
+        """
+
+        When we get "/archive/tag:example.com,0000:newsml_BRE9A605"
+        Then we get list with 0 items
+
+    @auth
     Scenario: Update item
         Given "archive"
         """
@@ -83,7 +93,6 @@ Feature: News Items Archive
         And the field "headline" value is "test"
 
 
-    @wip
     @auth
     Scenario: Upload image into archive
         Given empty "archive"
@@ -102,7 +111,7 @@ Feature: News Items Archive
         Then we get list with 1 items
         """
         {"_items": [{"headline": "flower", "byline": "foo", "description": "flower desc",
-                     "pubstatus": "Usable", "language": "en", "state": "draft"}]}
+                     "pubstatus": "usable", "language": "en", "state": "draft"}]}
         """
 
     @auth
@@ -245,7 +254,7 @@ Feature: News Items Archive
         """
         Then we get updated response
         """
-        { "headline": "test1", "pubstatus" : "Usable", "byline" : "By Line",
+        { "headline": "test1", "pubstatus" : "usable", "byline" : "By Line",
           "dateline" : "Sydney, Aus (Nov 12, 2014) AAP - ", "genre": [{"name": "Test"}]}
         """
         And we get version 2
@@ -309,17 +318,6 @@ Feature: News Items Archive
         """
         Then we get response code 200
 
-    @wip
-    @auth
-    Scenario: Hide private content
-        Given "archive"
-            """
-            [{"guid": "1"}]
-            """
-        When we get "/archive"
-        Then we get list with 0 items
-
-    @wip
     @auth
     Scenario: State of an Uploaded Image, submitted to a desk when updated should change to in-progress
         Given empty "archive"
@@ -340,7 +338,7 @@ Feature: News Items Archive
         Then we get list with 1 items
         """
         {"_items": [{"headline": "flower", "byline": "foo", "description": "flower desc",
-                     "pubstatus": "Usable", "language": "en", "state": "draft"}]}
+                     "pubstatus": "usable", "language": "en", "state": "draft"}]}
         """
         When we patch "/archive/#archive._id#"
         """
@@ -373,3 +371,42 @@ Feature: News Items Archive
       """
       {"_message": "Cannot delete desk as it has article(s)."}
       """
+
+    @auth
+    Scenario: Sign-off is properly updated
+        When we post to "/archive"
+        """
+        [{"type": "text", "body_html": "<p>content</p>"}]
+        """
+        Then we get new resource
+        """
+        {"type": "text", "sign_off":"abc"}
+        """
+        When we patch latest
+        """
+        {"headline": "test3"}
+        """
+        Then we get updated response
+        """
+        {"headline": "test3", "sign_off": "abc"}
+        """
+        When we switch user
+        And we patch latest
+        """
+        {"headline": "test4"}
+        """
+        Then we get updated response
+        """
+        {"headline": "test4", "sign_off": "abc/foo"}
+        """
+
+    @auth
+    Scenario: Assign a default Source to user created content Items
+        When we post to "/archive"
+        """
+        [{"type": "text", "body_html": "<p>content</p>"}]
+        """
+        Then we get new resource
+        """
+        {"type": "text", "source":"AAP"}
+        """

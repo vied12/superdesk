@@ -7,8 +7,10 @@
     UsersService.$inject = ['api', '$q', 'notify'];
     function UsersService(api, $q, notify) {
 
-        this.usernamePattern = /^[A-Za-z0-9_.'-]+$/;
-        this.phonePattern = /^(?:(?:0?[1-9][0-9]{8})|(?:(?:\+|00)[1-9][0-9]{9,11}))$/;
+        var usersService = {};
+
+        usersService.usernamePattern = /^[A-Za-z0-9_.'-]+$/;
+        usersService.phonePattern = /^(?:(?:0?[1-9][0-9]{8})|(?:(?:\+|00)[1-9][0-9]{9,11}))$/;
 
         /**
          * Save user with given data
@@ -17,19 +19,12 @@
          * @param {Object} data
          * @returns {Promise}
          */
-        this.save = function save(user, data) {
+        usersService.save = function save(user, data) {
             return api.save('users', user, data)
                 .then(function(updates) {
                     angular.extend(user, data);
                     angular.extend(user, updates);
                     return user;
-                }, function(response) {
-                    if (angular.isDefined(response.data._issues) &&
-                            angular.isDefined(response.data._issues['validator exception'])) {
-                        notify.error(gettext('Error: ' + response.data._issues['validator exception']));
-                    } else {
-                        notify.error(gettext('Error. User Profile not updated.'));
-                    }
                 });
         };
 
@@ -41,9 +36,9 @@
          * @param {string} newPassword
          * @returns {Promise}
          */
-        this.changePassword = function changePassword(user, oldPassword, newPassword) {
+        usersService.changePassword = function changePassword(user, oldPassword, newPassword) {
             return api.changePassword.create({username: user.username, old_password: oldPassword, new_password: newPassword})
-            	.then(function(result) {});
+                .then(function(result) {});
         };
 
         /**
@@ -52,7 +47,7 @@
          * @param {Object} user
          * @returns {Promise}
          */
-        this.resetPassword = function resetPassword(user) {
+        usersService.resetPassword = function resetPassword(user) {
             return api.resetPassword.create({email: user.email})
                 .then(function(result) {});
         };
@@ -60,23 +55,32 @@
         /**
          * Test if user is active
          */
-        this.isActive = function isActive(user) {
+        usersService.isActive = function isActive(user) {
             return user && user.is_active;
         };
 
         /**
          * Test if user is on pending state
          */
-        this.isPending = function isPending(user) {
+        usersService.isPending = function isPending(user) {
             return user && user.needs_activation;
         };
 
         /**
          * Toggle user status
          */
-        this.toggleStatus = function toggleStatus(user, active) {
+        usersService.toggleStatus = function toggleStatus(user, active) {
             return this.save(user, {is_active: active});
         };
+
+        /**
+         * Checks if the user is logged-in or not
+         */
+        usersService.isLoggedIn = function(user) {
+            return user && _.size(user.session_preferences) > 0;
+        };
+
+        return usersService;
     }
 
     /**
@@ -93,6 +97,36 @@
         var DEFAULT_CACHE_KEY = '_nosearch';
         var DEFAULT_PAGE = 1;
         var DEFAULT_PER_PAGE = 20;
+
+        userservice.getAll = function() {
+            var p = $q.when();
+            var deferred = $q.defer();
+
+            function _getAll(page, items) {
+                page = page || DEFAULT_PAGE;
+                items = items || [];
+
+                api('users')
+                    .query({max_results: 200, page: page})
+                    .then(function(result) {
+                        items = items.concat(result._items);
+                        if (result._links.next) {
+                            page++;
+                            p = p.then(_getAll(page, items));
+                        } else {
+                            cache.put(DEFAULT_CACHE_KEY, items);
+                            deferred.resolve(items);
+                        }
+                    });
+
+                return deferred.promise;
+            }
+
+            p = _getAll();
+            return p.then(function(res) {
+                return res;
+            });
+        };
 
         /**
          * Fetches and caches users, or returns from the cache.
@@ -118,6 +152,7 @@
                 if (search) {
                     criteria.where = JSON.stringify({
                         '$or': [
+                            {display_name: {'$regex': search, '$options': '-i'}},
                             {username: {'$regex': search, '$options': '-i'}},
                             {first_name: {'$regex': search, '$options': '-i'}},
                             {last_name: {'$regex': search, '$options': '-i'}},
@@ -148,7 +183,7 @@
          * Clear user cache
          */
         userservice.clearCache = function() {
-        	cache.removeAll();
+            cache.removeAll();
         };
 
         function buildKey(key, page, perPage) {
@@ -164,6 +199,7 @@
 
         $scope.selected = {user: null};
         $scope.createdUsers = [];
+        $scope.online_users = false;
 
         api('roles').query().then(function(result) {
             $scope.roles = _.indexBy(result._items, '_id');
@@ -202,6 +238,10 @@
         };
 
         function findUser(list, user) {
+            if (angular.isUndefined(user)) {
+                return false;
+            }
+
             return _.find(list, function(item) {
                 return item._links.self.href === user._links.self.href;
             });
@@ -213,15 +253,8 @@
                     max_results: Number(params.max_results) || DEFAULT_SIZE
                 };
 
-            if (params.q) {
-                criteria.where = JSON.stringify({
-                    '$or': [
-                        {username: {'$regex': params.q, '$options': '-i'}},
-                        {first_name: {'$regex': params.q, '$options': '-i'}},
-                        {last_name: {'$regex': params.q, '$options': '-i'}},
-                        {email: {'$regex': params.q, '$options': '-i'}}
-                    ]
-                });
+            if (params.q || $scope.online_users) {
+                criteria.where = initCriteria(params.q, $scope.online_users);
             }
 
             if (params.page) {
@@ -235,6 +268,37 @@
             }
 
             return criteria;
+        }
+
+        function initCriteria(search, online) {
+            var querySearch = null;
+            var queryOnline = null;
+
+            if (search) {
+                querySearch = {
+                    '$or': [
+                        {username: {'$regex': search, '$options': '-i'}},
+                        {display_name: {'$regex': search, '$options': '-i'}},
+                        {email: {'$regex': search, '$options': '-i'}}
+                    ]
+                };
+            }
+
+            if (online) {
+                queryOnline = {
+                    session_preferences: {$exists: true, $nin: [null, {}]}
+                };
+            }
+
+            if (search && online) {
+                return JSON.stringify({'$and': [querySearch, queryOnline]});
+            } else if (search) {
+                return JSON.stringify(querySearch);
+            } else if (online) {
+                return JSON.stringify(queryOnline);
+            }
+
+            return null;
         }
 
         function fetchUsers(criteria) {
@@ -256,6 +320,7 @@
         }
 
         $scope.$watch(getCriteria, fetchUsers, true);
+        $scope.$watch($scope.online_users, fetchUsers, true);
     }
 
     UserEditController.$inject = ['$scope', 'server', 'superdesk', 'user', 'session'];
@@ -328,11 +393,11 @@
     /**
      * Enable user
      */
-    UserEnableCommand.$inject = ['api', 'data', '$q', 'notify', 'gettext', 'users', '$rootScope'];
-    function UserEnableCommand(api, data, $q, notify, gettext, users, $rootScope) {
-    	var user = data.item;
+    UserEnableCommand.$inject = ['api', 'data', '$q', 'notify', 'gettext', 'usersService', '$rootScope'];
+    function UserEnableCommand(api, data, $q, notify, gettext, usersService, $rootScope) {
+        var user = data.item;
 
-        return users.save(user, {'is_enabled': true, 'is_active': true}).then(
+        return usersService.save(user, {'is_enabled': true, 'is_active': true}).then(
             function(response) {
                 $rootScope.$broadcast('user:updated', response);
             },
@@ -354,7 +419,7 @@
      */
     UserDeleteCommand.$inject = ['api', 'data', '$q', 'notify', 'gettext', '$rootScope'];
     function UserDeleteCommand(api, data, $q, notify, gettext, $rootScope) {
-    	var user = data.item;
+        var user = data.item;
         return api.users.remove(user).then(
             function(response) {
                 return api.users.getById(user._id)
@@ -433,8 +498,8 @@
                             notify.error(gettext('I\'m sorry but a role with that name already exists.'));
                         } else {
                             if (typeof(response.data._issues['validator exception']) !== 'undefined') {
-                                    notify.error(response.data._issues['validator exception']);
-                                } else {
+                                notify.error(response.data._issues['validator exception']);
+                            } else {
                                 notify.error(gettext('I\'m sorry but there was an error when saving the role.'));
                             }
                         }
@@ -464,7 +529,7 @@
 
                     //find previous role with flag 'default'
                     var previous = _.find(scope.roles, function(r) {
-                      return r._id !== role._id && r.is_default;
+                        return r._id !== role._id && r.is_default;
                     });
 
                     // update it
@@ -533,7 +598,7 @@
     ])
 
         .controller('UserEditController', UserEditController) // make it available to user.profile
-        .service('users', UsersService)
+        .service('usersService', UsersService)
         .factory('userList', UserListService)
 
         .factory('userPopup', ['$compile', '$timeout', 'userList', function ($compile, $timeout, userList) {
@@ -719,7 +784,7 @@
                 .activity('edit.avatar', {
                     label: gettext('Change avatar'),
                     modal: true,
-                    cssClass: 'upload-avatar',
+                    cssClass: 'upload-avatar modal-static modal-large',
                     controller: ChangeAvatarController,
                     templateUrl: asset.templateUrl('superdesk-users/views/change-avatar.html'),
                     filters: [{action: 'edit', type: 'avatar'}]
@@ -749,16 +814,16 @@
             // configure new 'compile' directive by passing a directive
             // factory function. The factory function injects the '$compile'
             $compileProvider.directive('compile', ['$compile', function($compile) {
-              // directive factory creates a link function
-              return function(scope, element, attrs) {
-                var value = scope.$eval(attrs.compile);
-                element.html(value);
-                var nscope = scope.$new(true);
-                _.each(scope.$eval(attrs.data), function(value, key) {
-                    nscope[key] = value;
-                });
-                $compile(element.contents())(nscope);
-              };
+                // directive factory creates a link function
+                return function(scope, element, attrs) {
+                    var value = scope.$eval(attrs.compile);
+                    element.html(value);
+                    var nscope = scope.$new(true);
+                    _.each(scope.$eval(attrs.data), function(value, key) {
+                        nscope[key] = value;
+                    });
+                    $compile(element.contents())(nscope);
+                };
             }]);
         }])
 
@@ -808,9 +873,9 @@
             };
         }])
 
-        .directive('sdUserEdit', ['api', 'gettext', 'notify', 'users', 'userList', 'session',
+        .directive('sdUserEdit', ['api', 'gettext', 'notify', 'usersService', 'userList', 'session',
             '$location', '$route', 'superdesk', 'features', 'asset', 'privileges', 'desks', 'keyboardManager',
-        function(api, gettext, notify, users, userList, session, $location, $route, superdesk, features,
+        function(api, gettext, notify, usersService, userList, session, $location, $route, superdesk, features,
                  asset, privileges, desks, keyboardManager) {
 
             return {
@@ -824,9 +889,10 @@
                 link: function(scope, elem) {
                     scope.privileges = privileges.privileges;
                     scope.features = features;
-                    scope.usernamePattern = users.usernamePattern;
-                    scope.phonePattern = users.phonePattern;
+                    scope.usernamePattern = usersService.usernamePattern;
+                    scope.phonePattern = usersService.phonePattern;
                     scope.dirty = false;
+                    scope.errorMessage = null;
 
                     scope.$watch('origUser', resetUser);
 
@@ -863,7 +929,7 @@
                         scope.error = null;
                         notify.info(gettext('saving..'));
 
-                        return users.save(scope.origUser, scope.user)
+                        return usersService.save(scope.origUser, scope.user)
                         .then(function(response) {
                             scope.origUser = response;
                             resetUser(scope.origUser);
@@ -887,28 +953,39 @@
                                 }
                                 notify.error(gettext('User is not found. It might be deleted.'));
                             } else {
+                                var errorMessage = gettext('There was an error when saving user. ');
+
                                 if (response.data && response.data._issues) {
+                                    if (angular.isDefined(response.data._issues['validator exception'])) {
+                                        errorMessage = gettext('Error: ' + response.data._issues['validator exception']);
+                                    }
+
                                     scope.error = response.data._issues;
+                                    scope.error.message = errorMessage;
+
                                     for (var field in response.data._issues) {
                                         if (scope.userForm[field]) {
                                             if (scope.error[field]) {
                                                 scope.error[field].format = true;
+                                                scope.error.message = null;
                                             }
                                             for (var constraint in response.data._issues[field]) {
                                                 if (response.data._issues[field][constraint]) {
                                                     scope.userForm[field].$setValidity(constraint, false);
+                                                    scope.error.message = null;
                                                 }
                                             }
                                         }
                                     }
                                 }
-                                notify.error(gettext('Hmm, there was an error when saving user. '));
+
+                                notify.error(errorMessage);
                             }
                         });
                     };
 
                     scope.toggleStatus = function(active) {
-                        users.toggleStatus(scope.origUser, active).then(function() {
+                        usersService.toggleStatus(scope.origUser, active).then(function() {
                             resetUser(scope.origUser);
                             scope.onupdate({user: scope.origUser});
                         });
@@ -919,10 +996,11 @@
                         scope.user = _.create(user);
                         scope.confirm = {password: null};
                         scope.show = {password: false};
-                        scope._active = users.isActive(user);
-                        scope._pending = users.isPending(user);
+                        scope._active = usersService.isActive(user);
+                        scope._pending = usersService.isPending(user);
                         scope.profile = scope.user._id === session.identity._id;
 
+                        scope.userDesks = [];
                         if (angular.isDefined(user) && angular.isDefined(user._links)) {
                             desks.fetchUserDesks(user).then(function(response) {
                                 scope.userDesks = response._items;
@@ -961,13 +1039,15 @@
                                 scope.cancel();
                             }, function(response) {
                                 notify.error(gettext('User preferences could not be saved...'));
-                        });
+                            });
                     };
 
                     function buildPreferences(struct) {
                         scope.preferences = {};
                         _.each(struct, function(val, key) {
-                            scope.preferences[key] = _.create(val);
+                            if (val.label && val.category) {
+                                scope.preferences[key] = _.create(val);
+                            }
                         });
                     }
 
@@ -1012,7 +1092,7 @@
                 }
             };
         }])
-        .directive('sdChangePassword', ['users', 'notify', 'gettext', function(users, notify, gettext) {
+        .directive('sdChangePassword', ['usersService', 'notify', 'gettext', function(usersService, notify, gettext) {
             return {
                 link: function(scope, element) {
                     scope.$watch('user', function() {
@@ -1026,7 +1106,7 @@
                      * @param {string} newPassword
                      */
                     scope.changePassword = function(oldPassword, newPassword) {
-                        return users.changePassword(scope.user, oldPassword, newPassword)
+                        return usersService.changePassword(scope.user, oldPassword, newPassword)
                             .then(function(response) {
                                 scope.oldPasswordInvalid = false;
                                 notify.success(gettext('The password has been changed.'), 3000);
@@ -1039,10 +1119,10 @@
             };
         }])
 
-        .directive('sdResetPassword', ['users', 'notify', 'gettext', function(users, notify, gettext) {
+        .directive('sdResetPassword', ['usersService', 'notify', 'gettext', function(usersService, notify, gettext) {
             return {
                 link: function(scope, element) {
-                	scope.$watch('user', function() {
+                    scope.$watch('user', function() {
                         scope.oldPasswordInvalid = false;
                     });
 
@@ -1050,7 +1130,7 @@
                      * reset user password
                      */
                     scope.resetPassword = function() {
-                        return users.resetPassword(scope.user)
+                        return usersService.resetPassword(scope.user)
                             .then(function(response) {
                                 scope.oldPasswordInvalid = false;
                                 notify.success(gettext('The password has been reset.'), 3000);
@@ -1120,7 +1200,7 @@
             };
         }])
 
-        .directive('sdUserList', ['keyboardManager', 'users', 'asset', function(keyboardManager, users, asset) {
+        .directive('sdUserList', ['keyboardManager', 'usersService', 'asset', function(keyboardManager, usersService, asset) {
             return {
                 templateUrl: asset.templateUrl('superdesk-users/views/user-list-item.html'),
                 scope: {
@@ -1132,22 +1212,27 @@
                 link: function(scope, elem, attrs) {
 
                     scope.active = function(user) {
-                        return users.isActive(user);
+                        return usersService.isActive(user);
                     };
 
                     scope.pending = function(user) {
-                        return users.isPending(user);
+                        return usersService.isPending(user);
                     };
 
                     scope.select = function(user) {
                         scope.selected = user;
                         bindKeys();
                     };
+
                     scope.$watch('selected', function(selected) {
-                       if (selected == null) {
+                        if (selected == null) {
                             bindKeys();
-                       }
+                        }
                     });
+
+                    scope.isLoggedIn = function(user) {
+                        return usersService.isLoggedIn(user);
+                    };
 
                     function bindKeys() {
                         unbindKeys();

@@ -33,6 +33,9 @@ tests.push('superdesk/privileges/privileges');
 tests.push('superdesk/notification/notification');
 tests.push('superdesk/itemList/itemList');
 tests.push('superdesk/ui/ui');
+tests.push('superdesk/upload/upload');
+tests.push('superdesk/list/list');
+tests.push('superdesk/keyboard/keyboard');
 
 // apps
 tests.push('superdesk-authoring/authoring');
@@ -51,6 +54,8 @@ tests.push('superdesk-desks/desks');
 tests.push('superdesk-groups/groups');
 tests.push('superdesk-search/search');
 
+tests.push('superdesk-ingest/module');
+
 tests.push('superdesk-users/users');
 tests.push('superdesk-users/profile');
 tests.push('superdesk-users/activity/activity');
@@ -60,17 +65,23 @@ tests.push('superdesk-dashboard/module');
 tests.push('superdesk-dashboard/workspace-tasks/tasks');
 
 tests.push('superdesk-archive/module');
+tests.push('superdesk-archive/directives');
+
+tests.push('superdesk-dictionaries/dictionaries');
+tests.push('superdesk-publish/publish');
+tests.push('superdesk/editor/spellcheck/spellcheck');
+tests.push('superdesk-templates/templates');
 
 // libs
 tests.push('bower_components/ment.io/dist/mentio');
-tests.push('angular-gettext');
 tests.push('angular-ui');
 tests.push('angular-route');
+tests.push('angular-file-upload');
 tests.push('moment');
 
 requirejs.config({
     baseUrl: '/base/app/scripts',
-    deps: ['angular-mocks', 'gettext', 'angular'],
+    deps: ['angular-mocks', 'angular-gettext', 'gettext', 'angular'],
 
     callback: function() {
         'use strict';
@@ -88,7 +99,8 @@ requirejs.config({
         'angular-gettext': 'bower_components/angular-gettext/dist/angular-gettext',
         'angular-route': 'bower_components/angular-route/angular-route',
         'angular-mocks': 'bower_components/angular-mocks/angular-mocks',
-        'angular-ui': 'bower_components/angular-bootstrap/ui-bootstrap',
+        'angular-ui': 'bower_components/angular-bootstrap/ui-bootstrap-tpls',
+        'angular-file-upload': 'bower_components/ng-file-upload/angular-file-upload',
         'moment-timezone': 'bower_components/moment-timezone/moment-timezone'
     },
 
@@ -106,6 +118,7 @@ requirejs.config({
         'angular-gettext': ['angular'],
         'angular-route': ['angular'],
         'angular-mocks': ['angular'],
-        'angular-ui': ['angular']
+        'angular-ui': ['angular'],
+        'angular-file-upload': ['angular']
     }
 });

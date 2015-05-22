@@ -96,19 +96,22 @@ class UsersService(BaseService):
         Checks if the requested 'PATCH' or 'DELETE' operation is Invalid.
         Operation is invalid if one of the below is True:
             1. Check if the user is updating his/her own status.
-            2. Check if the user is changing the status of other logged-in users.
-            3. A user without 'User Management' privilege is changing role/user_type/privileges
+            2. Check if the user is changing the role/user_type/privileges of other logged-in users.
+            3. A user without 'User Management' privilege is changing status/role/user_type/privileges
 
         :return: error message if invalid.
         """
 
         if 'user' in flask.g:
             if method == 'PATCH':
-                if ('is_active' in updates or 'is_enabled' in updates) and str(user['_id']) == str(flask.g.user['_id']):
-                    return 'Not allowed to change your own status'
-                if str(user['_id']) != str(flask.g.user['_id']) and get_resource_service('auth').get(
-                        req=None, lookup={'username': user['username']}).count() != 0:
-                    return 'Not allowed to change the status of a logged-in user'
+                if 'is_active' in updates or 'is_enabled' in updates:
+                    if str(user['_id']) == str(flask.g.user['_id']):
+                        return 'Not allowed to change your own status'
+                    elif not current_user_has_privilege('users'):
+                        return 'Insufficient privileges to change user state'
+                if str(user['_id']) != str(flask.g.user['_id']) and user.get('session_preferences') \
+                        and is_sensitive_update(updates):
+                    return 'Not allowed to change the role/user_type/privileges of a logged-in user'
             elif method == 'DELETE' and str(user['_id']) == str(flask.g.user['_id']):
                 return 'Not allowed to disable your own profile.'
 
@@ -121,6 +124,7 @@ class UsersService(BaseService):
 
         if enabled is not None or active is not None:
             get_resource_service('auth').delete_action({'username': user.get('username')})  # remove active tokens
+            updates['session_preferences'] = {}
 
             # send email notification
             can_send_mail = get_resource_service('preferences').email_notification_is_enabled(user_id=user['_id'])
@@ -198,8 +202,12 @@ class UsersService(BaseService):
         items_locked_by_user = archive_service.get(req=None, lookup={'lock_user': user_id})
         if items_locked_by_user and items_locked_by_user.count():
             for item in items_locked_by_user:
-                archive_service.update(item['_id'], doc_to_unlock, item)
-                archive_autosave_service.delete(lookup={'_id': item['_id']})
+                # delete the item if nothing is saved so far
+                if item['_version'] == 1 and item['state'] == 'draft':
+                    get_resource_service('archive').delete(lookup={'_id': item['_id']})
+                else:
+                    archive_service.update(item['_id'], doc_to_unlock, item)
+                    archive_autosave_service.delete(lookup={'_id': item['_id']})
 
     def on_deleted(self, doc):
         """
@@ -362,7 +370,7 @@ class RolesService(BaseService):
             raise SuperdeskApiError.forbiddenError('Cannot delete the role, it still has users in it!')
 
     def remove_old_default(self):
-        # see of there is already a default role and set it to no longer default
+        # see if there is already a default role and set it to no longer default
         role_id = self.get_default_role_id()
         # make it no longer default
         if role_id:

@@ -16,7 +16,7 @@ from superdesk.resource import Resource
 from superdesk.errors import SuperdeskApiError, InvalidStateTransitionError
 from superdesk.notification import push_notification
 from superdesk.utc import utcnow
-from apps.archive.common import on_create_item, item_url
+from apps.archive.common import on_create_item, item_url, update_version
 from superdesk.services import BaseService
 from apps.content import metadata_schema
 import superdesk
@@ -80,8 +80,12 @@ class TaskResource(Resource):
         'source': 'archive',
         'default_sort': [('_updated', -1)],
         'filter': {'task': {'$exists': True}},
-        'elastic_filter': {'exists': {'field': 'task'}}  # eve-elastic specific filter
+        'elastic_filter': {'bool': {
+            'must': {'exists': {'field': 'task'}},
+            'must_not': {'term': {'state': 'spiked'}},
+        }}
     }
+
     item_url = item_url
     schema = {
         'slugline': metadata_schema['slugline'],
@@ -135,7 +139,7 @@ class TasksService(BaseService):
         Checks if the content is assigned to a new desk.
         :return: True if the content is being moved to a new desk. False otherwise.
         """
-        return original.get('task', {}).get('desk', '') != str(updates.get('task', {}).get('desk', ''))
+        return str(original.get('task', {}).get('desk', '')) != str(updates.get('task', {}).get('desk', ''))
 
     def __update_state(self, updates, original):
         if self.__is_content_assigned_to_new_desk(original, updates):
@@ -162,6 +166,7 @@ class TasksService(BaseService):
 
     def on_created(self, docs):
         push_notification(self.datasource, created=1)
+        push_notification('task:new')
         for doc in docs:
             insert_into_versions(doc['_id'])
             if is_assigned_to_a_desk(doc):
@@ -182,12 +187,18 @@ class TasksService(BaseService):
             updates['expiry'] = get_expiry(new_stage['desk'], new_stage_id)
             if new_stage.get('task_status'):
                 updates['task']['status'] = new_stage['task_status']
+        update_version(updates, original)
 
     def on_updated(self, updates, original):
-        new_stage = updates.get('task', {}).get('stage', '')
-        old_stage = original.get('task', {}).get('stage', '')
-        if new_stage != old_stage:
-            push_notification('task:stage', new_stage=str(new_stage), old_stage=str(old_stage))
+        new_task = updates.get('task', {})
+        old_task = original.get('task', {})
+        if new_task.get('stage') != old_task.get('stage'):
+            push_notification('task:stage',
+                              new_stage=str(new_task.get('stage', '')),
+                              old_stage=str(old_task.get('stage', '')),
+                              new_desk=str(new_task.get('desk', '')),
+                              old_desk=str(old_task.get('desk', ''))
+                              )
         else:
             push_notification(self.datasource, updated=1)
         updated = copy(original)

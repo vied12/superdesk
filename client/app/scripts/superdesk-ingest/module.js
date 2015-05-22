@@ -47,6 +47,9 @@ define([
         dpa: {
             label: 'DPA',
             templateUrl: 'scripts/superdesk-ingest/views/settings/aapConfig.html'
+        },
+        search: {
+            label: 'Search provider'
         }
     });
 
@@ -200,6 +203,13 @@ define([
             });
         };
 
+        this.fetchItem = function(id) {
+            return api.ingest.getById(id)
+            .then(function(item) {
+                $scope.selected.fetch = item;
+            });
+        };
+
         var oldQuery = _.omit($location.search(), '_id');
         var update = angular.bind(this, function searchUpdated() {
             var newquery = _.omit($location.search(), '_id');
@@ -306,8 +316,8 @@ define([
         };
     }
 
-    IngestSourcesContent.$inject = ['providerTypes', 'gettext', 'notify', 'api', '$location'];
-    function IngestSourcesContent(providerTypes, gettext, notify, api, $location) {
+    IngestSourcesContent.$inject = ['providerTypes', 'gettext', 'notify', 'api', '$location', 'modal'];
+    function IngestSourcesContent(providerTypes, gettext, notify, api, $location, modal) {
         return {
             templateUrl: 'scripts/superdesk-ingest/views/settings/ingest-sources-content.html',
             link: function($scope) {
@@ -319,11 +329,35 @@ define([
                 $scope.seconds = [0, 5, 10, 15, 30, 45];
                 $scope.hours = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24];
 
+                // a list of all data field names in retrieved content
+                // expected by the server
+                // XXX: have this somewhere in config? probably better
+                $scope.contentFields = [
+                    'body_text', 'guid', 'published_parsed',
+                    'summary', 'title', 'updated_parsed'
+                ];
+
+                // a list of data field names currently *not* selected in any
+                // of the dropdown menus in the field aliases section
+                $scope.fieldsNotSelected = angular.copy($scope.contentFields);
+
+                // a list of field names aliases - used for fields in retrieved
+                // content whose names differ from what the server expects
+                $scope.fieldAliases = [];
+
                 function fetchProviders() {
                     return api.ingestProviders.query({max_results: 200})
                         .then(function(result) {
                             $scope.providers = result;
-                    });
+                        });
+                }
+
+                function fetchSourceErrors(source_type) {
+                    return api('ingest_errors').query({'source_type': source_type})
+                        .then(function(result) {
+                            $scope.provider.source_errors = result._items[0].source_errors;
+                            $scope.provider.all_errors = result._items[0].all_errors;
+                        });
                 }
 
                 function openProviderModal() {
@@ -361,18 +395,59 @@ define([
                 });
 
                 $scope.remove = function(provider) {
-                    api.ingestProviders.remove(provider)
-                    .then(function() {
-                        notify.success(gettext('Provider deleted.'));
-                    }).then(fetchProviders);
+                    modal.confirm(gettext('Are you sure you want to delete Ingest Source?')).then(
+                        function removeIngestProviderChannel() {
+                            api.ingestProviders.remove(provider)
+                                .then(
+                                    function () {
+                                        notify.success(gettext('Ingest Source deleted.'));
+                                    },
+                                    function(response) {
+                                        if (angular.isDefined(response.data._message)) {
+                                            notify.error(response.data._message);
+                                        } else {
+                                            notify.error(gettext('Error: Unable to delete Ingest Source'));
+                                        }
+                                    }
+                                ).then(fetchProviders);
+                        }
+                    );
                 };
 
                 $scope.edit = function(provider) {
+                    var aliases;
+
                     $scope.origProvider = provider || {};
                     $scope.provider = _.create($scope.origProvider);
                     $scope.provider.update_schedule = $scope.origProvider.update_schedule || DEFAULT_SCHEDULE;
                     $scope.provider.idle_time = $scope.origProvider.idle_time || DEFAULT_IDLE_TIME;
                     $scope.provider.notifications = $scope.origProvider.notifications;
+                    $scope.provider.config = $scope.origProvider.config;
+                    $scope.provider.critical_errors = $scope.origProvider.critical_errors;
+
+                    // init the lists of field aliases and non-selected fields
+                    $scope.fieldAliases = [];
+                    aliases = (angular.isDefined($scope.origProvider.config) && $scope.origProvider.config.field_aliases) || [];
+
+                    var aliasObj = {};
+                    aliases.forEach(function (item) {
+                        _.extend(aliasObj, item);
+                    });
+
+                    Object.keys(aliasObj).forEach(function (fieldName) {
+                        $scope.fieldAliases.push(
+                            {fieldName: fieldName, alias: aliasObj[fieldName]});
+                    });
+
+                    $scope.fieldsNotSelected = $scope.contentFields.filter(
+                        function (fieldName) {
+                            return !(fieldName in aliasObj);
+                        }
+                    );
+
+                    if (provider && provider.type) {
+                        fetchSourceErrors(provider.type);
+                    }
                 };
 
                 $scope.cancel = function() {
@@ -390,9 +465,9 @@ define([
                 * needed for an RSS source.
                 *
                 * @method setRssConfig
-                * @param {Object} provider ingest provider instance
+                * @param {Object} provider - ingest provider instance
                 */
-                $scope.setRssConfig = function(provider) {
+                $scope.setRssConfig = function (provider) {
                     if (!provider.config.auth_required) {
                         provider.config.username = null;
                         provider.config.password = null;
@@ -400,7 +475,91 @@ define([
                     $scope.provider.config = provider.config;
                 };
 
+                /**
+                * Appends a new (empty) item to the list of field aliases.
+                *
+                * @method addFieldAlias
+                */
+                $scope.addFieldAlias = function () {
+                    $scope.fieldAliases.push({fieldName: null, alias: ''});
+                };
+
+                /**
+                * Removes a field alias from the list of field aliases at the
+                * specified index.
+                *
+                * @method removeFieldAlias
+                * @param {Number} itemIdx - index of the item to remove
+                */
+                $scope.removeFieldAlias = function (itemIdx) {
+                    var removed = $scope.fieldAliases.splice(itemIdx, 1);
+                    if (removed[0].fieldName) {
+                        $scope.fieldsNotSelected.push(removed[0].fieldName);
+                    }
+                };
+
+                /**
+                * Updates the list of content field names not selected in any
+                * of the dropdown menus.
+                *
+                * @method fieldSelectionChanged
+                */
+                $scope.fieldSelectionChanged = function () {
+                    var selectedFields = {};
+
+                    $scope.fieldAliases.forEach(function (item) {
+                        if (item.fieldName) {
+                            selectedFields[item.fieldName] = true;
+                        }
+                    });
+
+                    $scope.fieldsNotSelected = $scope.contentFields.filter(
+                        function (fieldName) {
+                            return !(fieldName in selectedFields);
+                        }
+                    );
+                };
+
+                /**
+                * Calculates a list of content field names that can be used as
+                * options in a dropdown menu.
+                *
+                * The list is comprised of all field names that are currently
+                * not selected in any of the other dropdown menus and
+                * of a field name that should be selected in the current
+                * dropdown menu (if any).
+                *
+                * @method availableFieldOptions
+                * @param {String} [selectedName] - currently selected field
+                * @return {String[]} list of field names
+                */
+                $scope.availableFieldOptions = function (selectedName) {
+                    var fieldNames = angular.copy($scope.fieldsNotSelected);
+
+                    // add current field selection, if available
+                    if (selectedName) {
+                        fieldNames.push(selectedName);
+                    }
+                    return fieldNames;
+                };
+
                 $scope.save = function() {
+                    var newAliases = [];
+
+                    $scope.fieldAliases.forEach(function (item) {
+                        if (item.fieldName && item.alias) {
+                            var newAlias = {};
+                            newAlias[item.fieldName] = item.alias;
+                            newAliases.push(newAlias);
+                        }
+                    });
+
+                    if (typeof($scope.provider.config) !== 'undefined') {
+                        $scope.provider.config.field_aliases = newAliases;
+                    }
+                    delete $scope.provider.all_errors;
+                    delete $scope.provider.source_errors;
+
                     api.ingestProviders.save($scope.origProvider, $scope.provider)
                     .then(function() {
                         notify.success(gettext('Provider saved!'));
@@ -807,6 +966,10 @@ define([
 
                 scope.addFetch = function() {
                     if (scope.newFetch.desk && scope.newFetch.stage) {
+                        if (scope.newFetch.destination_groups) {
+                            var destinationGroups = _.pluck(scope.newFetch.destination_groups, '_id');
+                            scope.newFetch.destination_groups = destinationGroups;
+                        }
                         scope.rule.actions.fetch.push(scope.newFetch);
                         scope.newFetch = {};
                     }
@@ -820,6 +983,10 @@ define([
 
                 scope.addPublish = function() {
                     if (scope.newPublish.desk && scope.newPublish.stage) {
+                        if (scope.newPublish.destination_groups) {
+                            var destinationGroups = _.pluck(scope.newPublish.destination_groups, '_id');
+                            scope.newPublish.destination_groups = destinationGroups;
+                        }
                         scope.rule.actions.publish.push(scope.newPublish);
                         scope.newPublish = {};
                     }
@@ -1134,6 +1301,17 @@ define([
                 category: superdesk.MENU_MAIN,
                 privileges: {ingest_providers: 1}
             })
+            .activity('fetchAs', {
+                label: gettext('Fetch As'),
+                icon: 'archive',
+                controller: ['$location', 'data', function($location, data) {
+                    $location.search('fetch', data.item._id);
+                }],
+                filters: [
+                    {action: 'list', type: 'ingest'}
+                ],
+                privileges: {fetch: 1}
+            })
             .activity('archive', {
                 label: gettext('Fetch'),
                 icon: 'archive',
@@ -1157,6 +1335,46 @@ define([
                 ],
                 privileges: {fetch: 1},
                 key: 'f'
+            })
+            .activity('externalsource', {
+                label: gettext('Get from external source'),
+                icon: 'archive',
+                monitor: true,
+                controller: ['api', 'data', 'desks', function(api, data, desks) {
+                    desks.fetchCurrentDeskId().then(function(deskid) {
+                        api(data.item.fetch_endpoint).save({
+                            guid: data.item.guid,
+                            desk: deskid
+                        })
+                        .then(
+                            function(response) {
+                                data.item.error = response;
+                            })
+                        ['finally'](function() {
+                            data.item.actioning.externalsource = false;
+                        });
+                    });
+                }],
+                filters: [{action: 'list', type: 'externalsource'}],
+                privileges: {fetch: 1}
+            })
+            .activity('text_archive', {
+                label: gettext('Delete from text archive'),
+                icon: 'remove',
+                monitor: true,
+                controller: ['api', 'data', function(api, data) {
+                    api
+                        .remove(data.item, {}, 'text_archive')
+                        .then(
+                            function(response) {
+                                data.item.error = response;
+                            })
+                    ['finally'](function() {
+                        data.item.actioning.text_archive = false;
+                    });
+                }],
+                filters: [{action: 'list', type: 'text_archive'}],
+                privileges: {textarchive: 1}
             });
     }]);
 

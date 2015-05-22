@@ -12,7 +12,6 @@
 import superdesk
 from flask import current_app as app, json, g
 from apps.archive.common import aggregations
-from apps.archive.common import aggregations
 from eve_elastic.elastic import set_filters
 
 
@@ -22,13 +21,16 @@ class SearchService(superdesk.Service):
     It can search ingest/content/archive/spike at the same time.
     """
 
-    available_repos = ('ingest', 'archive')
-    default_repos = ['ingest', 'archive']
+    available_repos = ('ingest', 'archive', 'text_archive', 'published')
+    default_repos = ['ingest', 'archive', 'text_archive', 'published']
 
     private_filters = [{
         'or': [
-            {'exists': {'field': 'task.desk'}},
-            {'not': {'term': {'_type': 'archive'}}}
+            {'and': [{'exists': {'field': 'task.desk'}},
+                     {'terms': {'state': ['fetched', 'routed', 'draft', 'in_progress', 'submitted']}}]},
+            {'not': {'term': {'_type': 'archive'}}},
+            {'and': [{'term': {'_type': 'published'}},
+                     {'terms': {'state': ['published', 'killed']}}]}
         ]
     }]
 

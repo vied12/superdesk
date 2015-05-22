@@ -51,7 +51,10 @@ Feature: User preferences
 
         When we patch "/preferences/#SESSION_ID#"
         """
-        {"user_preferences": {"feature:preview": {"enabled": true }}}
+        {"user_preferences": {
+            "feature:preview": {"enabled": true},
+            "editor:theme": {"label": "Editor"}
+        }}
         """
         Then we get existing resource
         """
@@ -63,10 +66,12 @@ Feature: User preferences
                     "enabled": true,
                     "label": "Enable Feature Preview",
                     "type": "bool"
-                }
+                },
+                "editor:theme": {"type": "string"}
             }
         }
         """
+        And there is no "label" in "editor:theme" preferences
 
 
     @auth
@@ -98,7 +103,7 @@ Feature: User preferences
 
         When we patch "/preferences/#SESSION_ID#"
         """
-        {"user_preferences": {"editor:theme": {"theme": "railscast"}}}
+        {"user_preferences": {"editor:theme": {"theme": "railscast", "category": "editor"}}}
         """
 
         When we get "/preferences/#SESSION_ID#"
@@ -107,8 +112,6 @@ Feature: User preferences
         {
             "user_preferences": {
                 "editor:theme": {
-                    "category": "editor",
-                    "label": "Users article edit screen editor theme",
                     "theme": "railscast",
                     "type": "string"
                 }
@@ -246,3 +249,12 @@ Feature: User preferences
             }
         }
         """
+
+    @auth
+    Scenario: Session Preferences are deleted when user logsout of Superdesk
+      Given I logout
+      When we login as user "foo" with password "bar"
+      Then we get "/users/test_user" and match
+      """
+      {"username": "test_user", "session_preferences": {}}
+      """

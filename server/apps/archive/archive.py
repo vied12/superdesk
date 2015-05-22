@@ -7,7 +7,9 @@
 # For the full copyright and license information, please see the
 # AUTHORS and LICENSE files distributed with this source code, or
 # at https://www.sourcefabric.org/superdesk/license
+
 from apps.users.services import current_user_has_privilege
+from settings import DEFAULT_SOURCE_VALUE_FOR_MANUAL_ARTICLES
 
 
 SOURCE = 'archive'
@@ -17,12 +19,11 @@ from superdesk.resource import Resource
 from .common import extra_response_fields, item_url, aggregations, remove_unwanted, update_state, set_item_expiry, \
     is_update_allowed
 from .common import on_create_item, on_duplicate_item, generate_unique_id_and_name
-from .common import get_user
+from .common import get_user, update_version, set_sign_off, handle_existing_data
 from flask import current_app as app
 from werkzeug.exceptions import NotFound
 from superdesk import get_resource_service
 from superdesk.errors import SuperdeskApiError
-from superdesk.utc import utcnow
 from eve.versioning import resolve_document_version
 from superdesk.activity import add_activity, ACTIVITY_CREATE, ACTIVITY_UPDATE, ACTIVITY_DELETE
 from eve.utils import parse_request, config
@@ -40,10 +41,44 @@ import superdesk
 import logging
 from apps.common.models.utils import get_model
 from apps.item_lock.models.item import ItemModel
-from .archive_composite import PackageService
+from apps.packages import PackageService, TakesPackageService
 from .archive_media import ArchiveMediaService
+from superdesk.utc import utcnow
+import datetime
 
 logger = logging.getLogger(__name__)
+
+
+def item_schema(extra=None):
+    """Create schema for item.
+
+    :param extra: extra fields to be added to schema
+    """
+    schema = {
+        'old_version': {
+            'type': 'number',
+        },
+        'last_version': {
+            'type': 'number',
+        },
+        'task': {'type': 'dict'},
+        'destination_groups': {
+            'type': 'list',
+            'schema': Resource.rel('destination_groups', True)
+        },
+        'publish_schedule': {
+            'type': 'datetime',
+            'nullable': True
+        },
+        'marked_for_not_publication': {
+            'type': 'boolean',
+            'default': False
+        }
+    }
+    schema.update(metadata_schema)
+    if extra:
+        schema.update(extra)
+    return schema
 
 
 def get_subject(doc1, doc2=None):
@@ -89,17 +124,7 @@ class ArchiveVersionsResource(Resource):
 
 
 class ArchiveResource(Resource):
-    schema = {
-        'old_version': {
-            'type': 'number',
-        },
-        'last_version': {
-            'type': 'number',
-        },
-        'task': {'type': 'dict'}
-    }
-
-    schema.update(metadata_schema)
+    schema = item_schema()
     extra_response_fields = extra_response_fields
     item_url = item_url
     datasource = {
@@ -110,8 +135,10 @@ class ArchiveResource(Resource):
             'last_version': 0
         },
         'default_sort': [('_updated', -1)],
+        'elastic_filter': {'terms': {'state': ['fetched', 'routed', 'draft', 'in_progress', 'spiked', 'submitted']}},
         'elastic_filter_callback': private_content_filter
     }
+    etag_ignore_fields = ['highlights']
     resource_methods = ['GET', 'POST']
     item_methods = ['GET', 'PATCH', 'PUT']
     versioning = True
@@ -129,7 +156,17 @@ def update_word_count(doc):
 
 class ArchiveService(BaseService):
     packageService = PackageService()
+    takesService = TakesPackageService()
     mediaService = ArchiveMediaService()
+
+    def on_fetched(self, docs):
+        """
+        Overriding this to handle existing data in Mongo & Elastic
+        """
+
+        for item in docs[config.ITEMS]:
+            handle_existing_data(item)
+            self.takesService.enhance_with_package_info(item)
 
     def on_create(self, docs):
         on_create_item(docs)
@@ -145,6 +182,13 @@ class ArchiveService(BaseService):
 
             if doc.get('media'):
                 self.mediaService.on_create([doc])
+
+            # let client create version 0 docs
+            if doc.get('version') == 0:
+                doc['_version'] = doc['version']
+
+            if not doc.get('ingest_provider'):
+                doc['source'] = DEFAULT_SOURCE_VALUE_FOR_MANUAL_ARTICLES
 
     def on_created(self, docs):
         packages = [doc for doc in docs if doc['type'] == 'composite']
@@ -167,6 +211,19 @@ class ArchiveService(BaseService):
         is_update_allowed(original)
         user = get_user()
 
+        if 'publish_schedule' in updates and original['state'] == 'scheduled':
+            # this is an descheduling action
+            self.deschedule_item(updates, original)
+            return
+
+        if updates.get('publish_schedule'):
+            if datetime.datetime.fromtimestamp(False).date() == updates.get('publish_schedule').date():
+                # publish_schedule field will be cleared
+                updates['publish_schedule'] = None
+            else:
+                # validate the schedule
+                self.validate_schedule(updates.get('publish_schedule'))
+
         if 'unique_name' in updates and not is_admin(user) \
                 and (user['active_privileges'].get('metadata_uniquename', 0) == 0):
             raise SuperdeskApiError.forbiddenError("Unauthorized to modify Unique Name")
@@ -179,9 +236,7 @@ class ArchiveService(BaseService):
         lock_user = original.get('lock_user', None)
         force_unlock = updates.get('force_unlock', False)
 
-        original_creator = updates.get('original_creator', None)
-        if not original_creator:
-            updates['original_creator'] = original['original_creator']
+        updates.setdefault('original_creator', original['original_creator'])
 
         str_user_id = str(user.get('_id'))
         if lock_user and str(lock_user) != str_user_id and not force_unlock:
@@ -190,6 +245,7 @@ class ArchiveService(BaseService):
         updates['versioncreated'] = utcnow()
         set_item_expiry(updates, original)
         updates['version_creator'] = str_user_id
+        set_sign_off(updates, original)
         update_word_count(updates)
 
         if force_unlock:
@@ -197,6 +253,8 @@ class ArchiveService(BaseService):
 
         if original['type'] == 'composite':
             self.packageService.on_update(updates, original)
+
+        update_version(updates, original)
 
     def on_updated(self, updates, original):
         get_component(ItemAutosave).clear(original['_id'])
@@ -261,9 +319,13 @@ class ArchiveService(BaseService):
 
     def find_one(self, req, **lookup):
         item = super().find_one(req, **lookup)
+
         if item and str(item.get('task', {}).get('stage', '')) in \
                 get_resource_service('users').get_invisible_stages_ids(get_user().get('_id')):
             raise SuperdeskApiError.forbiddenError("User does not have permissions to read the item.")
+
+        handle_existing_data(item)
+
         return item
 
     def restore_version(self, id, doc, original):
@@ -339,6 +401,24 @@ class ArchiveService(BaseService):
         if new_versions:
             get_resource_service('archive_versions').post(new_versions)
 
+    def deschedule_item(self, updates, doc):
+        updates['state'] = 'in_progress'
+        updates['publish_schedule'] = None
+        # delete entries from publish queue
+        get_resource_service('publish_queue').delete_by_article_id(doc['_id'])
+        # delete entry from published repo
+        get_resource_service('published').delete_by_article_id(doc['_id'])
+
+    def validate_schedule(self, schedule):
+        if not isinstance(schedule, datetime.date):
+            raise SuperdeskApiError.badRequestError("Schedule date is not recognized")
+        if not schedule.date() or schedule.date().year <= 1970:
+            raise SuperdeskApiError.badRequestError("Schedule date is not recognized")
+        if not schedule.time():
+            raise SuperdeskApiError.badRequestError("Schedule time is not recognized")
+        if schedule < utcnow():
+            raise SuperdeskApiError.badRequestError("Schedule cannot be earlier than now")
+
     def can_edit(self, item, user_id):
         """
         Determines if the user can edit the item or not.
@@ -379,10 +459,7 @@ class ArchiveService(BaseService):
 class AutoSaveResource(Resource):
     endpoint_name = 'archive_autosave'
     item_url = item_url
-    schema = {
-        '_id': {'type': 'string'}
-    }
-    schema.update(metadata_schema)
+    schema = item_schema({'_id': {'type': 'string'}})
     resource_methods = ['POST']
     item_methods = ['GET', 'PUT', 'PATCH']
     resource_title = endpoint_name
@@ -403,13 +480,13 @@ class ArchiveSaveService(BaseService):
 superdesk.workflow_state('in_progress')
 superdesk.workflow_action(
     name='save',
-    include_states=['draft', 'fetched', 'routed', 'submitted'],
+    include_states=['draft', 'fetched', 'routed', 'submitted', 'scheduled'],
     privileges=['archive']
 )
 
 superdesk.workflow_state('submitted')
 superdesk.workflow_action(
     name='move',
-    exclude_states=['ingested', 'spiked', 'on-hold', 'published', 'killed'],
+    exclude_states=['ingested', 'spiked', 'on-hold', 'published', 'scheduled', 'killed'],
     privileges=['archive']
 )

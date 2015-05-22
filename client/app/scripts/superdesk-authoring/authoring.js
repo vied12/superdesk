@@ -21,7 +21,14 @@
         dateline: '',
         language: null,
         unique_name: '',
-        keywords: []
+        keywords: [],
+        description: null,
+        destination_groups: null,
+        sign_off: null,
+        publish_schedule: null,
+        marked_for_not_publication: false,
+        pubstatus: null,
+        more_coming: false
     };
 
     /**
@@ -32,6 +39,14 @@
      */
     function extendItem(dest, src) {
         return angular.extend(dest, _.pick(src, _.keys(CONTENT_FIELDS_DEFAULTS)));
+    }
+
+    function stripHtml(item) {
+        var elem = document.createElement('div');
+        elem.innerHTML = item.headline? item.headline: '';
+        if (elem.textContent !== '') {
+            item.headline = elem.textContent;
+        }
     }
 
     /**
@@ -87,6 +102,11 @@
             this.stop(item);
             timeouts[item._id] = $timeout(function() {
                 var diff = extendItem({_id: item._id}, item);
+
+                if (diff.publish_schedule === null) {
+                    delete diff.publish_schedule;
+                }
+
                 return api.save(RESOURCE, {}, diff).then(function(_autosave) {
                     extendItem(item, _autosave);
                     var orig = Object.getPrototypeOf(item);
@@ -173,15 +193,16 @@
          *
          *   and save it if dirty
          *
+         * @param {Object} orig original item.
          * @param {Object} diff Edits.
          * @param {boolean} isDirty $scope dirty status.
          */
-        this.publishConfirmation = function publishAuthoring(diff, isDirty) {
+        this.publishConfirmation = function publishAuthoring(orig, diff, isDirty, action) {
             var promise = $q.when();
             if (this.isEditable(diff) && isDirty) {
-                promise = confirm.confirmPublish()
+                promise = confirm.confirmPublish(action)
                     .then(angular.bind(this, function save() {
-                        return this.save(diff);
+                        return true;
                     }), function() { // cancel
                         return false;
                     });
@@ -189,17 +210,25 @@
 
             return promise;
         };
-        this.publish = function publish(item) {
-            return api.update('archive_publish', item, {})
+
+        this.publish = function publish(orig, diff, action) {
+            action = action || 'publish';
+            diff = extendItem({}, diff);
+
+            if (!diff.publish_schedule) {
+                delete diff.publish_schedule;
+            }
+
+            var endpoint = 'archive_' + action;
+            return api.update(endpoint, orig, diff)
             .then(function(result) {
                 return lock.unlock(result)
                     .then(function(result) {
                         return result;
                     });
             }, function(response) {
-                //notify.error(gettext('Error. Item not updated.'));
+                return response;
             });
-
         };
 
         /**
@@ -219,8 +248,8 @@
          */
         this.save = function saveAuthoring(origItem, item) {
             var diff = extendItem({}, item);
-
             // Finding if all the keys are dirty for real
+
             if (angular.isDefined(origItem)) {
                 angular.forEach(_.keys(diff), function(key) {
                     if (_.isEqual(diff[key], origItem[key])) {
@@ -229,6 +258,7 @@
                 });
             }
 
+            stripHtml(diff);
             autosave.stop(item);
             return api.save('archive', item, diff).then(function(_item) {
                 item._autosave = null;
@@ -244,6 +274,10 @@
          */
         this.isEditable = function isEditable(item) {
             return !!item.lock_user && !lock.isLocked(item);
+        };
+
+        this.isPublished = function isPublished(item) {
+            return _.contains(['published', 'killed', 'scheduled', 'corrected'], item.state);
         };
 
         /**
@@ -275,11 +309,29 @@
             });
             item._locked = true;
         };
+
+        /**
+        * Link an item for takes.
+        * @param {Object} item : Target Item
+        * @param {string} [link_id]: If not provider it returns the new Linked item.
+        * @param {string} [desk]: Desk for newly create item.
+        */
+        this.linkItem = function link(item, link_id, desk) {
+            var data = {};
+            if (link_id) {
+                data.link_id = link_id;
+            }
+
+            if (desk) {
+                data.desk = desk;
+            }
+
+            return api.save('archive_link', {}, data, item);
+        };
     }
 
-    LockService.$inject = ['$q', 'api', 'session', 'privileges'];
-    function LockService($q, api, session, privileges) {
-
+    LockService.$inject = ['$q', 'api', 'session', 'privileges', 'notify'];
+    function LockService($q, api, session, privileges, notify) {
         /**
          * Lock an item
          */
@@ -292,7 +344,9 @@
                     item.lock_session = session.sessionId;
                     return item;
                 }, function(err) {
+                    notify.error(gettext('Failed to get a lock on the item!'));
                     item._locked = true;
+                    item._editable = false;
                     return item;
                 });
             } else {
@@ -394,11 +448,11 @@
         /**
          * In case $scope is dirty ask user if he want's to save changes and publish.
          */
-        this.confirmPublish = function confirmPublish() {
+        this.confirmPublish = function confirmPublish(action) {
             return modal.confirm(
-                gettext('There are some unsaved changes, do you want to save it and publish now?'),
+                gettext('There are some unsaved changes, do you want to save it and ' + action + ' now?'),
                 gettext('Save changes?'),
-                gettext('Save and publish'),
+                gettext('Save and ' + action),
                 gettext('Cancel')
             );
         };
@@ -430,9 +484,10 @@
         };
     }
 
-    AuthoringController.$inject = ['$scope', 'item'];
-    function AuthoringController($scope, item) {
+    AuthoringController.$inject = ['$scope', 'item', 'action'];
+    function AuthoringController($scope, item, action) {
         $scope.origItem = item;
+        $scope.action = action || 'edit';
 
         $scope.widget_target = 'authoring';
 
@@ -446,6 +501,7 @@
         'superdesk',
         'notify',
         'gettext',
+        'adminPublishSettingsService',
         'desks',
         'authoring',
         'api',
@@ -456,11 +512,12 @@
         '$location',
         'referrer',
         'macros',
-        '$timeout'
+        '$timeout',
+        '$q'
     ];
-    function AuthoringDirective(superdesk, notify, gettext,
-                                 desks, authoring, api, session, lock, privileges,
-                                 ContentCtrl, $location, referrer, macros, $timeout) {
+    function AuthoringDirective(superdesk, notify, gettext, adminPublishSettingsService,
+                                desks, authoring, api, session, lock, privileges,
+                                ContentCtrl, $location, referrer, macros, $timeout, $q) {
         return {
             link: function($scope) {
                 var _closing;
@@ -472,9 +529,86 @@
                 $scope.views = {send: false};
                 $scope.stage = null;
                 $scope._editable = $scope.origItem._editable;
+                $scope.isMediaType = _.contains(['audio', 'video', 'picture'], $scope.origItem.type);
+                $scope.action = $scope.action || ($scope.editable ? 'edit' : 'view');
+
+                $scope.publish_enabled = $scope.origItem && $scope.origItem.task && $scope.origItem.task.desk &&
+                    (($scope.privileges.publish === 1 && !authoring.isPublished($scope.origItem)) ||
+                     ($scope.origItem.state === 'published' && $scope.privileges.kill === 1) ||
+                     ($scope.origItem.state === 'published' && $scope.privileges.correct === 1) ||
+                     ($scope.origItem.state === 'corrected' && !$scope.origItem.last_publish_action && $scope.privileges.correct === 1));
+
+                $scope.save_visible = $scope._editable && !authoring.isPublished($scope.origItem);
+                $scope._isInProductionStates = !authoring.isPublished($scope.origItem);
+
+                $scope.not_for_publication_visible = $scope.publish_enabled && !authoring.isPublished($scope.origItem) &&
+                    !$scope.origItem.marked_for_not_publication;
+
+                $scope.origItem.sign_off = $scope.origItem.sign_off || $scope.origItem.version_creator;
+                $scope.origItem.destination_groups = $scope.origItem.destination_groups || [];
+                $scope.takes_package = (angular.isDefined($scope.origItem.package_type) && $scope.origItem.package_type === 'takes');
+
+                function resolveDestinations() {
+                    if ($scope.origItem.destination_groups && $scope.origItem.destination_groups.length) {
+                        adminPublishSettingsService.fetchDestinationGroupsByIds($scope.origItem.destination_groups)
+                            .then(function(result) {
+                                var destinationGroups = [];
+                                _.each(result._items, function(item) {
+                                    destinationGroups.push(item);
+                                });
+                                $scope.vars = {destinationGroups: destinationGroups};
+                            });
+                    } else {
+                        $scope.vars = {destinationGroups: []};
+                    }
+                }
+
+                if ($scope.action === 'kill') {
+                    api('content_templates').getById('kill').then(function(template) {
+                        template = _.pick(template, _.keys(CONTENT_FIELDS_DEFAULTS));
+                        var body = template.body_html;
+                        if (body) {
+                            // get the placeholders out of the template
+                            var placeholders = _.words(body, /\${([\s\S]+?)}/g);
+                            placeholders = _.map(placeholders, function(placeholder) {
+                                return _.trim(placeholder, '${} ');
+                            });
+
+                            var compiled = _.template(body);
+                            var args = _.pick($scope.origItem, placeholders);
+                            $scope.origItem.body_html = compiled(args);
+                        }
+                        _.each(template, function(value, key) {
+                            if (!_.isEmpty(value)) {
+                                if (key !== 'body_html') {
+                                    if (key === 'destination_groups') {
+                                        $scope.origItem.destination_groups = _.union($scope.origItem.destination_groups, value);
+                                    } else {
+                                        $scope.origItem[key] = value;
+                                    }
+                                }
+                            }
+                        });
+                        resolveDestinations();
+                    });
+                } else if ($scope.action === 'kill') {
+                    $scope.origItem.pubstatus = 'Corrected';
+                    resolveDestinations();
+                } else {
+                    resolveDestinations();
+                }
+
+                $scope.$watch('vars', function() {
+                    if ($scope.vars && $scope.vars.destinationGroups) {
+                        var destinationGroups = _.pluck($scope.vars.destinationGroups, '_id').sort();
+                        if (!_.isEqual(destinationGroups, $scope.item.destination_groups)) {
+                            $scope.item.destination_groups = destinationGroups;
+                            $scope.autosave($scope.item);
+                        }
+                    }
+                }, true);
 
                 $scope.proofread = false;
-
                 $scope.referrerUrl = referrer.getReferrerUrl();
 
                 if ($scope.origItem.task && $scope.origItem.task.stage) {
@@ -487,14 +621,15 @@
                 /**
                  * Create a new version
                  */
-            	$scope.save = function() {
-            		return authoring.save($scope.origItem, $scope.item).then(function(res) {
+                $scope.save = function() {
+                    return authoring.save($scope.origItem, $scope.item).then(function(res) {
                         $scope.origItem = res;
                         $scope.dirty = false;
                         $scope.item = _.create($scope.origItem);
+                        $scope.not_for_publication_visible = $scope.publish_enabled && res.marked_for_not_publication === false;
                         notify.success(gettext('Item updated.'));
                         return $scope.origItem;
-            		}, function(response) {
+                    }, function(response) {
                         if (angular.isDefined(response.data._issues)) {
                             if (angular.isDefined(response.data._issues.unique_name) &&
                                 response.data._issues.unique_name.unique === 1) {
@@ -505,37 +640,128 @@
                         } else {
                             notify.error(gettext('Error. Item not updated.'));
                         }
-            		});
-            	};
+                    });
+                };
 
-                function publishItem(item) {
-                    authoring.publish(item)
-                    .then(function(res) {
-                        if (res) {
-                            notify.success(gettext('Item published.'));
-                            $scope.item = res;
-                            $scope.dirty = false;
+                function validateDestinationGroups(item) {
+                    if (!item.destination_groups || !item.destination_groups.length) {
+                        return $q.reject('Error. Destination groups invalid.');
+                    }
+                    return adminPublishSettingsService.fetchDestinationGroupsByIds(item.destination_groups)
+                    .then(function(result) {
+                        if (result._items.length !== item.destination_groups.length) {
+                            return $q.reject('Error. Destination groups invalid.');
                         }
-                    }, function(response) {
-                        notify.error(gettext('Error. Item not published.'));
+                        return true;
+                    });
+                }
+
+                function validatePublishSchedule(item) {
+                    if (_.contains(['published', 'killed', 'corrected'], item.state)) {
+                        return true;
+                    }
+
+                    if (item.publish_schedule_date && !item.publish_schedule_time) {
+                        notify.error(gettext('Publish Schedule time is invalid!'));
+                        return false;
+                    }
+
+                    if (item.publish_schedule_time && !item.publish_schedule_date) {
+                        notify.error(gettext('Publish Schedule date is invalid!'));
+                        return false;
+                    }
+
+                    if (item.publish_schedule) {
+                        var schedule = new Date(item.publish_schedule);
+
+                        if (!_.isDate(schedule)) {
+                            notify.error(gettext('Publish Schedule is not a valid date!'));
+                            return false;
+                        }
+
+                        if (schedule < _.now()) {
+                            notify.error(gettext('Publish Schedule cannot be earlier than now!'));
+                            return false;
+                        }
+
+                        if (!schedule.getTime()) {
+                            notify.error(gettext('Publish Schedule time is invalid!'));
+                            return false;
+                        }
+                    }
+
+                    return true;
+                }
+
+                function publishItem(orig, item) {
+                    var action = $scope.action === 'edit' ? 'publish' : $scope.action;
+                    authoring.publish(orig, item, action)
+                    .then(function(response) {
+                        if (response) {
+                            if (angular.isDefined(response.data) && angular.isDefined(response.data._issues)) {
+                                if (angular.isDefined(response.data._issues['validator exception'])) {
+
+                                    var errors = response.data._issues['validator exception'];
+                                    var modified_errors = errors.replace(/\[/g, '').replace(/\]/g, '').split(',');
+                                    for (var i = 0; i < modified_errors.length; i++) {
+                                        notify.error(modified_errors[i]);
+                                    }
+
+                                    if (errors.indexOf('9007') >= 0 || errors.indexOf('9009') >= 0) {
+                                        authoring.open(item._id, true).then(function(res) {
+                                            $scope.origItem = res;
+                                            $scope.dirty = false;
+                                            $scope.item = _.create($scope.origItem);
+                                        });
+                                    }
+                                }
+                            } else if (response.status === 412) {
+                                notify.error(gettext('Precondition Error: Item not published.'));
+                                $scope.publish_enabled = false;
+                                $scope.save_visible = false;
+                            } else {
+                                notify.success(gettext('Item published.'));
+                                $scope.item = response;
+                                $scope.dirty = false;
+                                $location.url($scope.referrerUrl);
+                            }
+                        } else {
+                            notify.error(gettext('Unknown Error: Item not published.'));
+                        }
                     });
                 }
 
                 $scope.publish = function() {
-                    if ($scope.dirty) { // save dialog & then publish if confirm
-                        authoring.publishConfirmation($scope.item, $scope.dirty)
-                        .then(function(res) {
-                            if (res) {
-                                publishItem(res);
-                                $location.url($scope.referrerUrl);
+                    if (validatePublishSchedule($scope.item)) {
+                        validateDestinationGroups($scope.item)
+                        .then(function() {
+                            if ($scope.dirty) { // save dialog & then publish if confirm
+                                var message = $scope.action === 'kill' ? $scope.action : 'publish';
+                                authoring.publishConfirmation($scope.origItem, $scope.item, $scope.dirty, message)
+                                .then(function(res) {
+                                    if (res) {
+                                        publishItem($scope.origItem, $scope.item);
+                                    }
+                                }, function(response) {
+                                    notify.error(gettext('Error. Item not published.'));
+                                });
+                            } else { // Publish
+                                publishItem($scope.origItem, $scope.item);
                             }
-                        }, function(response) {
-                            notify.error(gettext('Error. Item not published.'));
+                        }, function(res) {
+                            notify.error(gettext(res));
                         });
-                    } else { // Publish
-                        publishItem($scope.origItem);
-                        $location.url($scope.referrerUrl);
                     }
+                };
+
+                $scope.markForPublication = function(isArticlePublishable) {
+                    $scope.item.marked_for_not_publication = isArticlePublishable;
+                    return $scope.save();
+                };
+
+                $scope.deschedule = function() {
+                    $scope.item.publish_schedule = false;
+                    return $scope.save();
                 };
 
                 /**
@@ -549,11 +775,11 @@
                 };
 
                 $scope.beforeSend = function() {
-					$scope.sending = true;
+                    $scope.sending = true;
                     return $scope.save()
                     .then(function() {
                         var p = lock.unlock($scope.origItem);
-                		return p;
+                        return p;
                     });
                 };
 
@@ -617,10 +843,14 @@
                 $scope.lock = function() {
                     var path = $location.path();
                     if (path.indexOf('/view') < 0) {
-                       lock.lock($scope.item, true).then(updateEditorState);
+                        lock.lock($scope.item, true).then(updateEditorState);
                     } else {
                         superdesk.intent($scope.intentFilter.action, $scope.intentFilter.type, $scope.origItem);
                     }
+                };
+
+                $scope.openAction = function(action) {
+                    $location.path('/authoring/' + $scope.item._id + '/' + action);
                 };
 
                 $scope.isLockedByMe = function() {
@@ -640,8 +870,8 @@
                         session.sessionId !== data.lock_session) {
                         var path = $location.path();
                         if (path.indexOf('/view') < 0) {
-                           authoring.lock($scope.item, data.user);
-                           $location.url($scope.referrerUrl);
+                            authoring.lock($scope.item, data.user);
+                            $location.url($scope.referrerUrl);
                         }
                     }
                 });
@@ -654,6 +884,26 @@
                         $scope.item._locked = false;
                         $scope.item.lock_session = null;
                         $scope.item.lock_user = null;
+                    }
+                });
+
+                $scope.openStage = function openStage() {
+                    desks.setWorkspace($scope.item.task.desk, $scope.item.task.stage);
+                    superdesk.intent('view', 'content');
+                };
+
+                $scope.$on('item:publish:closed:channels', function(_e, data) {
+                    if (data.item === $scope.item._id) {
+                        notify.error(gettext('Item published to closed Output Channel(s).'));
+                    }
+                });
+
+                $scope.$on('item:publish:wrong:format', function(_e, data) {
+                    if (data.item === $scope.item._id) {
+                        notify.error(gettext('Item having story name ' +
+                            data.unique_name +
+                            ' has wrong formatted Output Channel(s):' +
+                            data.output_channels.join(',')));
                     }
                 });
 
@@ -685,7 +935,8 @@
     }
 
     var cleanHtml = function(data) {
-        return data.replace(/<\/?[^>]+>/gi, '').replace('&nbsp;', ' ');
+        return data.replace(/<br[^>]*>/gi, '&nbsp;').replace(/<\/?[^>]+><\/?[^>]+>/gi, ' ')
+            .replace(/<\/?[^>]+>/gi, '').trim().replace(/&nbsp;/g, ' ');
     };
 
     CharacterCount.$inject = [];
@@ -819,85 +1070,322 @@
             }
         };
     }
-
-    SendItem.$inject = ['$q', 'superdesk', 'api', 'desks', 'notify', '$location'];
-    function SendItem($q, superdesk, api, desks, notify, $location) {
+    SendItem.$inject = ['$q', 'superdesk', 'api', 'desks', 'notify', '$location', 'macros', '$rootScope', 'authoring'];
+    function SendItem($q, superdesk, api, desks, notify, $location, macros, $rootScope, authoring) {
         return {
             scope: {
                 item: '=',
                 view: '=',
-                _beforeSend: '=beforeSend'
+                _beforeSend: '=beforeSend',
+                mode: '@'
             },
             templateUrl: 'scripts/superdesk-authoring/views/send-item.html',
             link: function sendItemLink(scope, elem, attrs) {
-                scope.desk = null;
+                scope.mode = scope.mode || 'authoring';
                 scope.desks = null;
                 scope.stages = null;
+                scope.macros = null;
+                scope.task = null;
+                scope.selectedDesk = null;
+                scope.selectedStage = null;
+                scope.selectedMacro = null;
                 scope.beforeSend = scope._beforeSend || $q.when;
 
+                scope.$watch('item', function() {
+                    if (scope.item) {
+                        desks.initialize()
+                        .then(fetchDesks)
+                        .then(fetchStages)
+                        .then(fetchMacros);
+                    }
+                });
+
+                scope.close = function() {
+                    if (scope.$parent.views) {
+                        scope.$parent.views.send = false;
+                    } else {
+                        scope.item = null;
+                    }
+                    $location.search('fetch', null);
+                };
+
                 scope.selectDesk = function(desk) {
-                    scope.desk = desk;
+                    scope.selectedDesk = _.cloneDeep(desk);
                     scope.selectedStage = null;
                     fetchStages();
+                    fetchMacros();
                 };
 
                 scope.selectStage = function(stage) {
                     scope.selectedStage = stage;
                 };
+                scope.selectMacro = function(macro) {
+                    if (scope.selectedMacro === macro) {
+                        scope.selectedMacro = null;
+                    } else {
+                        scope.selectedMacro = macro;
+                    }
+                };
+                scope.send = function(open) {
+                    var deskId = scope.selectedDesk._id;
+                    var stageId = scope.selectedStage._id || scope.selectedDesk.incoming_stage;
 
-                scope.send = function send() {
-                    save({
-                            desk: scope.desk._id,
-                            stage: scope.selectedStage._id || scope.desk.incoming_stage
+                    if (scope.mode === 'authoring') {
+                        return sendAuthoring(deskId, stageId, scope.selectedMacro);
+                    } else if (scope.mode === 'archive') {
+                        return sendContent(deskId, stageId, scope.selectedMacro, open);
+                    } else if (scope.mode === 'ingest') {
+                        return sendIngest(deskId, stageId, scope.selectedMacro, open);
+                    }
+                };
+
+                scope.canSendAndContinue = function() {
+                    return !authoring.isPublished(scope.item) && _.contains(['text', 'preformatted'], scope.item.type);
+                };
+
+                scope.sendAndContinue = function() {
+                    var deskId = scope.selectedDesk._id;
+                    var stageId = scope.selectedStage._id || scope.selectedDesk.incoming_stage;
+                    var activeDeskId = desks.activeDeskId;
+                    scope.item.more_coming = true;
+                    return sendAuthoring(deskId, stageId, scope.selectedMacro, true)
+                        .then(function() {
+                            return authoring.linkItem(scope.item, null, activeDeskId);
+                        })
+                        .then(function (item) {
+                            notify.success(gettext('New take created.'));
+                            $location.url('/authoring/' + item._id);
+                        }, function(err) {
+                            notify.error('Failed to send and continue.');
                         });
                 };
 
-                scope.$watch('item', fetchDesks);
+                var runMacro = function(item, macro) {
+                    var p;
+                    if (macro) {
+                        p = macros.call(macro, item)
+                        .then(function(result) {
+                            return api.save('archive', item, extendItem({}, result));
+                        });
+                    } else {
+                        p = $q.when(item);
+                    }
+                    return p;
+                };
+
+                var sendAuthoring = function(deskId, stageId, macro, sendAndContinue) {
+                    var deferred;
+
+                    if (sendAndContinue) {
+                        deferred = $q.defer();
+                    }
+
+                    runMacro(scope.item, macro)
+                    .then(function(item) {
+                        api.find('tasks', scope.item._id)
+                        .then(function(task) {
+                            scope.task = task;
+                            return scope.beforeSend();
+                        })
+                        .then(function(result) {
+                            if (result && result._etag) {
+                                scope.task._etag = result._etag;
+                            }
+                            return api.save('tasks', scope.task, {
+                                task: _.extend(scope.task.task, {desk: deskId, stage: stageId})
+                            });
+                        })
+                        .then(function(value) {
+                            notify.success(gettext('Item sent.'));
+                            if (sendAndContinue) {
+                                return deferred.resolve();
+                            } else {
+                                $location.url(scope.$parent.referrerUrl);
+                            }
+                        }, function(err) {
+                            if (sendAndContinue) {
+                                return deferred.reject(err);
+                            }
+                        });
+                    });
+
+                    if (sendAndContinue) {
+                        return deferred.promise;
+                    }
+                };
+
+                var sendContent = function(deskId, stageId, macro, open) {
+                    var finalItem;
+                    api.save('duplicate', {}, {desk: scope.item.task.desk}, scope.item)
+                    .then(function(item) {
+                        return api.find('archive', item._id);
+                    })
+                    .then(function(item) {
+                        return runMacro(item, macro);
+                    })
+                    .then(function(item) {
+                        finalItem = item;
+                        return api.find('tasks', item._id);
+                    })
+                    .then(function(_task) {
+                        scope.task = _task;
+                        api.save('tasks', scope.task, {
+                            task: _.extend(scope.task.task, {desk: deskId, stage: stageId})
+                        });
+                    })
+                    .then(function() {
+                        notify.success(gettext('Item sent.'));
+                        if (open) {
+                            $location.url('/authoring/' + finalItem._id);
+                        } else {
+                            $rootScope.$broadcast('item:fetch');
+                        }
+                    });
+                };
+
+                var sendIngest = function(deskId, stageId, macro, open) {
+                    var finalItem;
+                    api.save('fetch', {}, {desk: deskId}, scope.item)
+                    .then(function(item) {
+                        return runMacro(item, macro);
+                    })
+                    .then(function(item) {
+                        finalItem = item;
+                        return api.find('tasks', item._id);
+                    })
+                    .then(function(_task) {
+                        scope.task = _task;
+                        api.save('tasks', scope.task, {
+                            task: _.extend(scope.task.task, {desk: deskId, stage: stageId})
+                        });
+                    })
+                    .then(function() {
+                        notify.success(gettext('Item fetched.'));
+                        if (open) {
+                            $location.url('/authoring/' + finalItem._id);
+                        } else {
+                            $rootScope.$broadcast('item:fetch');
+                        }
+                    });
+                };
 
                 function fetchDesks() {
-                    return api.find('tasks', scope.item._id)
-                        .then(function(_task) {
-                            scope.task = _task;
-                        }).then(function() {
-                            return desks.initialize();
-                        }).then(function() {
-                            scope.desks = desks.desks;
-                            scope.desk = desks.getItemDesk(scope.item);
-                        }).then(fetchStages);
+                    var p = desks.initialize()
+                    .then(function() {
+                        scope.desks = desks.desks;
+                    });
+                    if (scope.mode === 'ingest') {
+                        p = p.then(function() {
+                            scope.selectDesk(desks.getCurrentDesk());
+                        });
+                    } else {
+                        p = p.then(function() {
+                            var itemDesk = desks.getItemDesk(scope.item);
+                            if (itemDesk) {
+                                scope.selectDesk(itemDesk);
+                            } else {
+                                scope.selectDesk(desks.getCurrentDesk());
+                            }
+                        });
+                    }
+
+                    return p;
+
                 }
 
                 function fetchStages() {
-                    if (scope.desk) {
-                        scope.stages = desks.deskStages[scope.desk._id];
-                        scope.selectedStage = _.find(scope.stages, {_id: scope.desk.incoming_stage});
+                    if (scope.selectedDesk) {
+                        scope.stages = desks.deskStages[scope.selectedDesk._id];
+                        scope.selectedStage = _.find(scope.stages, {_id: scope.selectedDesk.incoming_stage});
                     }
                 }
 
-                function save(data) {
-                    scope.beforeSend()
-                    .then(function(result) {
-		    			scope.task._etag = result._etag;
-                        api.save('move', {}, data, scope.task).then(gotoPreviousScreen);
-                    });
-                }
-
-                function gotoPreviousScreen($scope) {
-                    notify.success(gettext('Item sent.'));
-                    $location.url(scope.$parent.referrerUrl);
+                function fetchMacros() {
+                    if (scope.selectedDesk != null) {
+                        macros.getByDesk(scope.selectedDesk.name)
+                        .then(function(_macros) {
+                            scope.macros = _macros;
+                        });
+                    }
                 }
             }
         };
     }
 
-    function ContentCreateDirective() {
+    ContentCreateDirective.$inject = ['api'];
+    function ContentCreateDirective(api) {
+        var NUM_ITEMS = 5;
         return {
-            templateUrl: 'scripts/superdesk-authoring/views/sd-content-create.html'
+            templateUrl: 'scripts/superdesk-authoring/views/sd-content-create.html',
+            link: function(scope) {
+                scope.contentTemplates = null;
+
+                var fetchTemplates = function(numItems) {
+                    var params = {
+                        max_results: numItems || undefined,
+                        where: {template_type: 'create'}
+                    };
+                    api.content_templates.query(params)
+                    .then(function(result) {
+                        scope.contentTemplates = result;
+                    });
+                };
+
+                fetchTemplates(NUM_ITEMS);
+            }
         };
     }
 
-    function HighlightCreateDirective() {
+    TemplateSelectDirective.$inject = ['api'];
+    function TemplateSelectDirective(api) {
+        var PAGE_SIZE = 10;
+
+        var fetchTemplates = function(page, keyword) {
+            page = page || 1;
+            var params = {
+                max_results: PAGE_SIZE,
+                page: page
+            };
+            var criteria = {template_type: 'create'};
+            if (keyword) {
+                criteria.template_name = {'$regex': keyword, '$options': '-i'};
+            }
+            params.where = JSON.stringify({
+                '$and': [criteria]
+            });
+            return api.content_templates.query(params);
+        };
+
         return {
-            templateUrl: 'scripts/superdesk-authoring/views/sd-highlight-create.html'
+            templateUrl: 'scripts/superdesk-authoring/views/sd-template-select.html',
+            scope: {
+                selectAction: '=',
+                open: '='
+            },
+            link: function(scope) {
+                scope.maxPage = 1;
+                scope.options = {
+                    keyword: null,
+                    page: 1
+                };
+                scope.templates = null;
+
+                scope.close = function() {
+                    scope.open = false;
+                };
+
+                scope.select = function(template) {
+                    scope.selectAction(template);
+                };
+
+                scope.$watch('options', function() {
+                    fetchTemplates(scope.options.page, scope.options.keyword)
+                    .then(function(result) {
+                        scope.maxPage = Math.ceil(result._meta.total / PAGE_SIZE);
+                        scope.templates = result;
+                    });
+                }, true);
+            }
         };
     }
 
@@ -937,7 +1425,7 @@
         .directive('sdWordCount', WordCount)
         .directive('sdThemeSelect', ThemeSelectDirective)
         .directive('sdContentCreate', ContentCreateDirective)
-        .directive('sdHighlightCreate', HighlightCreateDirective)
+        .directive('sdTemplateSelect', TemplateSelectDirective)
         .directive('sdArticleEdit', ArticleEditDirective)
         .directive('sdAuthoring', AuthoringDirective)
         .directive('sdAuthoringTopbar', AuthoringTopbarDirective)
@@ -949,59 +1437,129 @@
                     category: '/authoring',
                     href: '/authoring/:_id',
                     when: '/authoring/:_id',
-                	label: gettext('Authoring'),
-	                templateUrl: 'scripts/superdesk-authoring/views/authoring.html',
+                    label: gettext('Authoring'),
+                    templateUrl: 'scripts/superdesk-authoring/views/authoring.html',
                     topTemplateUrl: 'scripts/superdesk-dashboard/views/workspace-topnav.html',
-	                controller: AuthoringController,
-	                filters: [{action: 'author', type: 'article'}],
+                    controller: AuthoringController,
+                    filters: [{action: 'author', type: 'article'}],
                     resolve: {
                         item: ['$route', 'authoring', function($route, authoring) {
                             return authoring.open($route.current.params._id, false);
-                        }]
+                        }],
+                        action: [function() {return 'edit';}]
                     },
-                   authoring: true
-	            })
+                    authoring: true
+                })
                 .activity('edit.text', {
-	            	label: gettext('Edit item'),
+                    label: gettext('Edit item'),
                     href: '/authoring/:_id',
                     priority: 10,
-	            	icon: 'pencil',
+                    icon: 'pencil',
                     controller: ['data', 'superdesk', function(data, superdesk) {
                         superdesk.intent('author', 'article', data.item);
-	                }],
+                    }],
                     filters: [{action: 'list', type: 'archive'}],
                     condition: function(item) {
-                        return item.type !== 'composite' && item.state !== 'published';
+                        return item.type !== 'composite' &&
+                        item.state !== 'published' &&
+                        item.state !== 'scheduled' &&
+                        item.state !== 'corrected' &&
+                        item.state !== 'killed';
                     }
-	            })
-	            .activity('view.text', {
-	            	label: gettext('View item'),
+                })
+                .activity('kill.text', {
+                    label: gettext('Kill item'),
+                    priority: 100,
+                    icon: 'remove',
+                    controller: ['data', 'superdesk', function(data, superdesk) {
+                        superdesk.intent('kill', 'content_article', data.item);
+                    }],
+                    filters: [{action: 'list', type: 'archive'}],
+                    condition: function(item) {
+                        return item.type !== 'composite' &&
+                        (item.state === 'published' ||  item.state === 'corrected') &&
+                        !item.last_publish_action && (item.lock_user === null || angular.isUndefined(item.lock_user));
+                    },
+                    privileges: {kill: 1}
+                })
+                .activity('kill.content_article', {
+                    category: '/authoring',
+                    href: '/authoring/:_id/kill',
+                    when: '/authoring/:_id/kill',
+                    label: gettext('Authoring Kill'),
+                    templateUrl: 'scripts/superdesk-authoring/views/authoring.html',
+                    topTemplateUrl: 'scripts/superdesk-dashboard/views/workspace-topnav.html',
+                    controller: AuthoringController,
+                    filters: [{action: 'kill', type: 'content_article'}],
+                    resolve: {
+                        item: ['$route', 'authoring', function($route, authoring) {
+                            return authoring.open($route.current.params._id, false);
+                        }],
+                        action: [function() {return 'kill';}]
+                    },
+                    authoring: true
+                })
+                .activity('correct.text', {
+                    label: gettext('Correct item'),
+                    priority: 100,
+                    icon: 'pencil',
+                    controller: ['data', 'superdesk', function(data, superdesk) {
+                        superdesk.intent('correct', 'content_article', data.item);
+                    }],
+                    filters: [{action: 'list', type: 'archive'}],
+                    condition: function(item) {
+                        return item.type !== 'composite' &&
+                        (item.state === 'published' ||  item.state === 'corrected')  &&
+                        !item.last_publish_action && (item.lock_user === null || angular.isUndefined(item.lock_user));
+                    },
+                    privileges: {correct: 1}
+                })
+                .activity('correct.content_article', {
+                    category: '/authoring',
+                    href: '/authoring/:_id/correct',
+                    when: '/authoring/:_id/correct',
+                    label: gettext('Authoring Correct'),
+                    templateUrl: 'scripts/superdesk-authoring/views/authoring.html',
+                    topTemplateUrl: 'scripts/superdesk-dashboard/views/workspace-topnav.html',
+                    controller: AuthoringController,
+                    filters: [{action: 'correct', type: 'content_article'}],
+                    resolve: {
+                        item: ['$route', 'authoring', function($route, authoring) {
+                            return authoring.open($route.current.params._id, false);
+                        }],
+                        action: [function() {return 'correct';}]
+                    },
+                    authoring: true
+                })
+                .activity('view.text', {
+                    label: gettext('View item'),
                     priority: 2000,
-	            	icon: 'external',
-	            	controller: ['data', 'superdesk', function(data, superdesk) {
+                    icon: 'fullscreen',
+                    controller: ['data', 'superdesk', function(data, superdesk) {
                         superdesk.intent('read_only', 'content_article', data.item);
-	                }],
+                    }],
                     filters: [{action: 'list', type: 'archive'}],
                     condition: function(item) {
                         return item.type !== 'composite';
                     }
-	            })
+                })
                 .activity('read_only.content_article', {
                     category: '/authoring',
                     href: '/authoring/:_id/view',
                     when: '/authoring/:_id/view',
-                	label: gettext('Authoring Read Only'),
-	                templateUrl: 'scripts/superdesk-authoring/views/authoring.html',
+                    label: gettext('Authoring Read Only'),
+                    templateUrl: 'scripts/superdesk-authoring/views/authoring.html',
                     topTemplateUrl: 'scripts/superdesk-dashboard/views/workspace-topnav.html',
-	                controller: AuthoringController,
-	                filters: [{action: 'read_only', type: 'content_article'}],
+                    controller: AuthoringController,
+                    filters: [{action: 'read_only', type: 'content_article'}],
                     resolve: {
                         item: ['$route', 'authoring', function($route, authoring) {
                             return authoring.open($route.current.params._id, true);
-                        }]
+                        }],
+                        action: [function() {return 'view';}]
                     },
                     authoring: true
-	            });
+                });
         }])
         .config(['apiProvider', function(apiProvider) {
             apiProvider.api('move', {

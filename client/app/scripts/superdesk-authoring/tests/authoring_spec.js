@@ -9,6 +9,7 @@ describe('authoring', function() {
 
     beforeEach(module('superdesk.preferences'));
     beforeEach(module('superdesk.authoring'));
+    beforeEach(module('superdesk.publish'));
     beforeEach(module('superdesk.auth'));
     beforeEach(module('superdesk.workspace.content'));
     beforeEach(module('superdesk.mocks'));
@@ -66,7 +67,7 @@ describe('authoring', function() {
         spyOn(api, 'save').and.returnValue($q.when({}));
 
         var lockedItem = {guid: GUID, _locked: true, lock_user: 'user:5'};
-        var $scope = startAuthoring(lockedItem);
+        var $scope = startAuthoring(lockedItem, 'edit');
         $rootScope.$digest();
 
         $scope.unlock();
@@ -78,7 +79,7 @@ describe('authoring', function() {
     }));
 
     it('can autosave and save an item', inject(function(api, $q, $timeout, $rootScope) {
-        var $scope = startAuthoring(item),
+        var $scope = startAuthoring(item, 'edit'),
             headline = 'test headline';
 
         expect($scope.dirty).toBe(false);
@@ -102,13 +103,13 @@ describe('authoring', function() {
     }));
 
     it('can use a previously created autosave', inject(function() {
-        var $scope = startAuthoring({_autosave: {headline: 'test'}});
+        var $scope = startAuthoring({_autosave: {headline: 'test'}}, 'edit');
         expect($scope.item._autosave.headline).toBe('test');
         expect($scope.item.headline).toBe('test');
     }));
 
     it('can save while item is being autosaved', inject(function($rootScope, $timeout, $q, api) {
-        var $scope = startAuthoring({headline: 'test'});
+        var $scope = startAuthoring({headline: 'test'}, 'edit');
 
         $scope.item.body_html = 'test';
         $rootScope.$digest();
@@ -122,15 +123,28 @@ describe('authoring', function() {
         expect($scope.item._autosave).toBeNull();
     }));
 
+    it('can open item stage', inject(function($rootScope, $location, desks, superdesk) {
+        var $scope = startAuthoring({headline: 'test'}, 'edit');
+        $scope.item.task = {desk: 1, stage: 2};
+
+        spyOn(desks, 'setWorkspace');
+        spyOn(superdesk, 'intent');
+
+        $scope.openStage();
+
+        expect(desks.setWorkspace).toHaveBeenCalledWith(1, 2);
+        expect(superdesk.intent).toHaveBeenCalledWith('view', 'content');
+    }));
+
     /**
      * Start authoring ctrl for given item.
      */
-    function startAuthoring(item) {
+    function startAuthoring(item, action) {
         var $scope;
 
         inject(function($rootScope, $controller, superdesk, $compile) {
             $scope = $rootScope.$new();
-            $controller(superdesk.activity('authoring').controller, {item: item, $scope: $scope});
+            $controller(superdesk.activity('authoring').controller, {$scope: $scope, item: item, action: action});
             $compile(angular.element('<div sd-authoring></div>'))($scope);
         });
 
@@ -215,21 +229,17 @@ describe('authoring', function() {
                 state: 'submitted'
             });
 
-            authoring.publishConfirmation(edit, true);
+            authoring.publishConfirmation(item, edit, true);
             $rootScope.$digest();
 
             expect(confirm.confirmPublish).toHaveBeenCalled();
             expect(lock.unlock).not.toHaveBeenCalled();
 
-            spyOn(authoring, 'save').and.returnValue($q.when());
-            confirmDefer.resolve();
-            $rootScope.$digest();
-
-            expect(authoring.save).toHaveBeenCalledWith(edit);
-
             spyOn(api, 'update').and.returnValue($q.when(_.extend({}, edit, {})));
+
             authoring.publish(edit);
             $rootScope.$digest();
+
             expect(api.update).toHaveBeenCalledWith('archive_publish', edit, {});
             expect(lock.unlock).toHaveBeenCalled();
         }));

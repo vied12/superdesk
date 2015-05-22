@@ -14,6 +14,10 @@ from superdesk.resource import Resource
 
 LINKED_IN_PACKAGES = 'linked_in_packages'
 PACKAGE = 'package'
+PACKAGE_TYPE = 'package_type'
+TAKES_PACKAGE = 'takes'
+ITEM_TYPE = 'type'
+ITEM_TYPE_COMPOSITE = 'composite'
 
 not_analyzed = {'type': 'string', 'index': 'not_analyzed'}
 
@@ -46,6 +50,10 @@ metadata_schema = {
         'mapping': not_analyzed
     },
     'family_id': {
+        'type': 'string',
+        'mapping': not_analyzed
+    },
+    'related_to': {  # this field keeps a reference to the related item from which metadata has been copied
         'type': 'string',
         'mapping': not_analyzed
     },
@@ -113,11 +121,15 @@ metadata_schema = {
     },
 
     # Story Metadata
-    'type': {
+    ITEM_TYPE: {
         'type': 'string',
-        'allowed': ['text', 'preformatted', 'audio', 'video', 'picture', 'graphic', 'composite'],
+        'allowed': ['text', 'preformatted', 'audio', 'video', 'picture', 'graphic', ITEM_TYPE_COMPOSITE],
         'default': 'text',
         'mapping': not_analyzed
+    },
+    PACKAGE_TYPE: {
+        'type': 'string',
+        'allowed': [TAKES_PACKAGE]
     },
     'language': {
         'type': 'string',
@@ -156,12 +168,15 @@ metadata_schema = {
         'type': 'integer',
         'nullable': True,
     },
+
+    # Related to state of an article
+
     'state': {
         'type': 'string',
         'allowed': superdesk.allowed_workflow_states,
         'mapping': not_analyzed,
     },
-    # The previous state the item was in before for example being spiked, when unspiked it will revert to this state
+    # The previous state the item was in before for example being spiked, when un-spiked it will revert to this state
     'revert_state': {
         'type': 'string',
         'allowed': superdesk.allowed_workflow_states,
@@ -169,14 +184,15 @@ metadata_schema = {
     },
     'pubstatus': {
         'type': 'string',
-        'allowed': ['Usable', 'Withhold', 'Canceled'],
-        'default': 'Usable',
+        'allowed': ['usable', 'withhold', 'canceled'],
+        'default': 'usable',
         'mapping': not_analyzed
     },
     'signal': {
         'type': 'string',
         'mapping': not_analyzed
     },
+
     'byline': {
         'type': 'string',
         'nullable': True,
@@ -202,7 +218,8 @@ metadata_schema = {
         'nullable': True,
     },
     'dateline': {
-        'type': 'string'
+        'type': 'string',
+        'nullable': True,
     },
     'expiry': {
         'type': 'datetime'
@@ -240,21 +257,30 @@ metadata_schema = {
     'creditline': {
         'type': 'string'
     },
-    'dateline': {
-        'type': 'string',
-        'nullable': True,
-    },
     LINKED_IN_PACKAGES: {
         'type': 'list',
         'readonly': True,
         'schema': {
             'type': 'dict',
             'schema': {
-                PACKAGE: Resource.rel('archive')
+                PACKAGE: Resource.rel('archive'),
+                PACKAGE_TYPE: {
+                    'type': 'string',
+                    'allowed': [TAKES_PACKAGE]
+                }
             }
         }
     },
     'highlight': Resource.rel('highlights'),
+    'highlights': {
+        'type': 'list',
+        'schema': Resource.rel('highlights', True)
+    },
+    'more_coming': {'type': 'boolean', 'default': False},
+    # Field which contains all the sign-offs done on this article, eg. twd/jwt/ets
+    'sign_off': {
+        'type': 'string'
+    },
 
     # Task and Lock Details
     'task_id': {

@@ -46,8 +46,8 @@
             return api.archive.save(new_package);
         };
 
-        this.createEmptyPackage = function createEmptyPackage(defaults) {
-            var idRef = 'main';
+        this.createEmptyPackage = function createEmptyPackage(defaults, idRef) {
+            idRef = idRef || 'main';
             var new_package = {
                 headline: '',
                 slugline: '',
@@ -89,7 +89,7 @@
             _.each(items, function(item) {
                 targetGroup.refs.push(getReferenceFor(item));
             });
-             _.extend(current, {groups: origGroups});
+            _.extend(current, {groups: origGroups});
         };
 
         this.fetchItem = function(packageItem) {
@@ -142,8 +142,8 @@
 
     }
 
-    PackagingController.$inject = ['$scope', 'item', 'packages', '$location'];
-    function PackagingController($scope, item, packages, $location) {
+    PackagingController.$inject = ['$scope', 'item', 'packages', 'api', 'modal', 'notify', 'gettext', 'superdesk'];
+    function PackagingController($scope, item, packages, api, modal, notify, gettext, superdesk) {
         $scope.origItem = item;
 
         $scope.widget_target = 'packages';
@@ -152,6 +152,31 @@
             action: 'author',
             type: 'package'
         };
+
+        //Highlights related functionality
+
+        $scope.highlight = !!item.highlight;
+
+        $scope.exportHighlight = function(item) {
+            if ($scope.save_enabled()) {
+                modal.confirm(gettext('You have unsaved changes, do you want to continue.'))
+                    .then(function() {
+                        _exportHighlight(item._id);
+                    }
+                );
+            } else {
+                _exportHighlight(item._id);
+            }
+        };
+
+        function _exportHighlight(_id) {
+            api.generate_highlights.save({}, {'package': _id})
+            .then(function(item) {
+                superdesk.intent('author', 'article', item);
+            }, function(response) {
+                notify.error(gettext('Error creating highlight.'));
+            });
+        }
     }
 
     SearchWidgetCtrl.$inject = ['$scope', 'packages', 'api', 'search'];
@@ -159,14 +184,23 @@
 
         $scope.selected = null;
         $scope.multiSelected = [];
+        $scope.query = null;
+        $scope.highlight = null;
 
         var packageItems = null;
+        var init = false;
 
         $scope.groupList = packages.groupList;
 
-        function fetchContentItems(q) {
-            var query = search.query({q: q});
+        function fetchContentItems() {
+            if (!init) {
+                return;
+            }
+            var query = search.query($scope.query);
             query.size(25);
+            if ($scope.highlight) {
+                query.filter({term: {'highlights': $scope.highlight.toString()}});
+            }
             api.archive.query(query.getCriteria(true))
             .then(function(result) {
                 $scope.contentItems = result._items;
@@ -174,7 +208,29 @@
         }
 
         $scope.$watch('query', function(query) {
-            fetchContentItems(query);
+            fetchContentItems();
+        });
+
+        $scope.$watch('highlight', function(highlight) {
+            fetchContentItems();
+        });
+
+        $scope.$watch('item', function(item) {
+            $scope.highlight = item.highlight;
+            if ($scope.highlight) {
+                api('highlights').getById($scope.highlight)
+                .then(function(result) {
+                    $scope.groupList = result.groups;
+                    init = true;
+                    fetchContentItems();
+                }, function(response) {
+                    init = true;
+                    fetchContentItems();
+                });
+            } else {
+                init = true;
+                fetchContentItems();
+            }
         });
 
         $scope.$watch('item.groups', function() {
@@ -185,8 +241,6 @@
             packages.addItemsToPackage($scope.item, group, [item]);
             $scope.autosave($scope.item);
         };
-
-        fetchContentItems();
 
         $scope.preview = function(item) {
             $scope.selected = item;
@@ -260,6 +314,7 @@
             link: function(scope) {
                 scope.limits = authoring.limits;
                 scope._editable = scope.origItem._editable;
+                scope._isInPublishedStates = authoring.isPublished(scope.origItem);
             }
         };
     }
@@ -405,22 +460,50 @@
         };
     }
 
-    PackageItemPreviewDirective.$inject = ['api'];
-    function PackageItemPreviewDirective(api) {
+    PackageItemPreviewDirective.$inject = ['api', 'lock'];
+    function PackageItemPreviewDirective(api, lock) {
         return {
             templateUrl: 'scripts/superdesk-packaging/views/sd-package-item-preview.html',
             link: function(scope) {
                 scope.data = null;
                 scope.error = null;
                 scope.type = scope.item.type || scope.item.itemClass.split(':')[1];
-                if (scope.type !== 'text' && scope.type !== 'composite' && scope.item.location) {
+                if (scope.item.location) {
                     api[scope.item.location].getById(scope.item.residRef)
                     .then(function(result) {
                         scope.data = result;
+                        scope.isLocked = lock.isLocked(scope.data);
+                        scope.isPublished = scope.data.state === 'published';
                     }, function(response) {
                         scope.error = true;
                     });
                 }
+
+                scope.$on('item:lock', function(_e, data) {
+                    if (scope.data && scope.data._id === data.item) {
+                        scope.$applyAsync(function() {
+                            scope.data.lock_user = data.user;
+                            scope.isLocked = lock.isLocked(scope.data);
+                        });
+                    }
+                });
+
+                scope.$on('item:unlock', function(_e, data) {
+                    if (scope.data && scope.data._id === data.item) {
+                        scope.$applyAsync(function() {
+                            scope.data.lock_user = null;
+                            scope.isLocked = false;
+                        });
+                    }
+                });
+
+                scope.$on('item:publish', function(_e, data) {
+                    if (scope.data && scope.data._id === data.item) {
+                        scope.$applyAsync(function() {
+                            scope.isPublished = true;
+                        });
+                    }
+                });
             }
         };
     }
@@ -552,7 +635,8 @@
                 }],
                 filters: [{action: 'list', type: 'archive'}],
                 condition: function(item) {
-                    return item.type === 'composite' && item.state !== 'published';
+                    return !_.contains(['published', 'killed', 'corrected'], item.state) &&
+                        item.type === 'composite' && item.package_type !== 'takes';
                 }
             })
             .activity('view.package', {
@@ -572,7 +656,7 @@
                 href: '/packaging/:_id/view',
                 when: '/packaging/:_id/view',
                 label: gettext('Packaging Read Only'),
-                 templateUrl: 'scripts/superdesk-packaging/views/packaging.html',
+                templateUrl: 'scripts/superdesk-packaging/views/packaging.html',
                 topTemplateUrl: 'scripts/superdesk-dashboard/views/workspace-topnav.html',
                 controller: PackagingController,
                 filters: [{action: 'read_only', type: 'content_package'}],
@@ -600,7 +684,10 @@
                             });
                         }
                     }],
-                    filters: [{action: 'create', type: 'package'}]
+                filters: [{action: 'create', type: 'package'}],
+                condition: function(item) {
+                    return item ? item.state !== 'killed' && item.package_type !== 'takes' : true;
+                }
             })
             .activity('package.item', {
                 label: gettext('Package item'),
@@ -618,27 +705,30 @@
                 }],
                 filters: [
                     {action: 'list', type: 'archive'}
-                ]
+                ],
+                condition: function(item) {
+                    return item.state !== 'killed' && item.package_type !== 'takes';
+                }
             });
-        }])
-        .config(['apiProvider', function(apiProvider) {
-            apiProvider.api('archive', {
-                type: 'http',
-                backend: {rel: 'archive'}
+    }])
+    .config(['apiProvider', function(apiProvider) {
+        apiProvider.api('archive', {
+            type: 'http',
+            backend: {rel: 'archive'}
+        });
+    }])
+    .config(['authoringWidgetsProvider', function(authoringWidgetsProvider) {
+        authoringWidgetsProvider
+            .widget('search', {
+                icon: 'view',
+                label: gettext('Search'),
+                template: 'scripts/superdesk-packaging/views/search.html',
+                side: 'left',
+                extended: true,
+                display: {authoring: false, packages: true}
             });
-        }])
-        .config(['authoringWidgetsProvider', function(authoringWidgetsProvider) {
-            authoringWidgetsProvider
-                .widget('search', {
-                    icon: 'view',
-                    label: gettext('Search'),
-                    template: 'scripts/superdesk-packaging/views/search.html',
-                    side: 'left',
-                    extended: true,
-                    display: {authoring: false, packages: true}
-                });
-        }])
-        .controller('SearchWidgetCtrl', SearchWidgetCtrl);
+    }])
+    .controller('SearchWidgetCtrl', SearchWidgetCtrl);
 
     return app;
 })();

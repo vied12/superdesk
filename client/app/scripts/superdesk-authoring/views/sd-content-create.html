@@ -20,9 +20,15 @@
     </button>
 </li>
 <li class="divider"></li>
+<li><span>{{ :: 'From template' | translate }}:</span></li>
+<li ng-repeat="template in contentTemplates._items">
+    <button ng-click="content.createFromTemplate(template)">
+        <i class="icon-plus-small icon-round icon-white"></i> {{ :: template.template_name }}
+    </button>
+</li>
 <li>
-    <button ng-click="content.createHighlight()">
-        <i class="icon-plus-small icon-round icon-white"></i> {{ :: 'Highlight Package' | translate }}
+    <button ng-click="displayTemplateSelect = true;">
+        {{ :: 'More templates...' | translate }}
     </button>
 </li>
 <li class="divider" ng-if="openUpload"></li>
@@ -31,3 +37,5 @@
         <i class="icon-upload-blue"></i> {{ :: 'UPLOAD' | translate }}
     </button>
 </li>
+
+<div sd-template-select data-select-action="content.createFromTemplate" data-open="displayTemplateSelect"></div>

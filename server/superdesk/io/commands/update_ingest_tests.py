@@ -17,11 +17,12 @@ from nose.tools import assert_raises
 from superdesk import get_resource_service
 from superdesk.utc import utcnow
 from superdesk.tests import setup
-from superdesk.errors import SuperdeskApiError
+from superdesk.errors import SuperdeskApiError, ProviderError
 from superdesk.io import register_provider
 from superdesk.io.tests import setup_providers, teardown_providers
 from superdesk.io.ingest_service import IngestService
 from superdesk.io.commands.remove_expired_content import get_expired_items
+from superdesk.celery_task_utils import mark_task_as_not_running, is_task_running
 
 
 class TestProviderService(IngestService):
@@ -30,7 +31,27 @@ class TestProviderService(IngestService):
         return []
 
 
-register_provider('test', TestProviderService())
+register_provider('test', TestProviderService(), [ProviderError.anpaError(None, None).get_error_description()])
+
+
+class CeleryTaskRaceTest(TestCase):
+    def setUp(self):
+        setup(context=self)
+
+    def test_the_second_update_fails_if_already_running(self):
+        provider = {'_id': 'abc', 'name': 'test provider', 'update_schedule': {'minutes': 1}}
+        with self.app.app_context():
+            removed = mark_task_as_not_running(provider['name'], provider['_id'])
+            self.assertFalse(removed)
+
+            failed_to_mark_as_running = is_task_running(provider['name'], provider['_id'], {'minutes': 1})
+            self.assertFalse(failed_to_mark_as_running, 'Failed to mark ingest update as running')
+
+            failed_to_mark_as_running = is_task_running(provider['name'], provider['_id'], {'minutes': 1})
+            self.assertTrue(failed_to_mark_as_running, 'Ingest update marked as running, possible race condition')
+
+            removed = mark_task_as_not_running(provider['name'], provider['_id'])
+            self.assertTrue(removed, 'Failed to mark ingest update as not running.')
 
 
 class UpdateIngestTest(TestCase):
@@ -109,6 +130,33 @@ class UpdateIngestTest(TestCase):
         ex = error_context.exception
         self.assertTrue(ex.status_code == 500)
 
+    def test_ingest_provider_closed_when_critical_error_raised(self):
+        provider_name = 'AAP'
+        with self.app.app_context():
+            provider = self._get_provider(provider_name)
+            self.assertFalse(provider.get('is_closed'))
+            provider_service = self._get_provider_service(provider)
+            provider_service.provider = provider
+            provider_service.close_provider(provider, ProviderError.anpaError())
+            provider = self._get_provider(provider_name)
+            self.assertTrue(provider.get('is_closed'))
+
+    def test_ingest_provider_calls_close_provider(self):
+        def mock_update(provider):
+            raise ProviderError.anpaError()
+
+        provider_name = 'AAP'
+        with self.app.app_context():
+            provider = self._get_provider(provider_name)
+            self.assertFalse(provider.get('is_closed'))
+            provider_service = self._get_provider_service(provider)
+            provider_service.provider = provider
+            provider_service._update = mock_update
+            with assert_raises(ProviderError):
+                provider_service.update(provider)
+            provider = self._get_provider(provider_name)
+            self.assertTrue(provider.get('is_closed'))
+
     def test_is_scheduled(self):
         self.assertTrue(ingest.is_scheduled({}), 'run after create')
         self.assertFalse(ingest.is_scheduled({'last_updated': utcnow()}), 'wait default time 5m')
@@ -124,7 +172,7 @@ class UpdateIngestTest(TestCase):
 
     def test_change_last_updated(self):
         with self.app.app_context():
-            ingest_provider = {'type': 'test', '_etag': 'test'}
+            ingest_provider = {'name': 'test', 'type': 'test', '_etag': 'test'}
             self.app.data.insert('ingest_providers', [ingest_provider])
 
             ingest.update_provider(ingest_provider)
@@ -164,16 +212,18 @@ class UpdateIngestTest(TestCase):
 
             items = provider_service.fetch_ingest(guid)
             for item in items:
-                item['ingest_provider'] = str(provider['_id'])
+                item['ingest_provider'] = provider['_id']
 
-            items[0]['expiry'] = utcnow() - timedelta(minutes=11)
-            items[1]['expiry'] = utcnow() + timedelta(minutes=11)
-            items[2]['expiry'] = utcnow() + timedelta(minutes=11)
-            items[5]['versioncreated'] = utcnow() + timedelta(minutes=11)
+            now = utcnow()
+            items[0]['expiry'] = now - timedelta(hours=11)
+            items[1]['expiry'] = now - timedelta(hours=11)
+            items[2]['expiry'] = now + timedelta(hours=11)
+            items[5]['versioncreated'] = now + timedelta(minutes=11)
 
-            self.app.data.insert('ingest', items)
-            expiredItems = get_expired_items(provider, utcnow() - timedelta(minutes=2880))
-            self.assertEquals(3, expiredItems.count())
+            service = get_resource_service('ingest')
+            service.post(items)
+            expiredItems = get_expired_items(provider, now)
+            self.assertEquals(4, expiredItems.count())
 
     def test_apply_rule_set(self):
         with self.app.app_context():

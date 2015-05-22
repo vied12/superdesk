@@ -23,7 +23,8 @@
 		padding: 8px 25px;
 		height: 28px;
 	}
-	.page-title-wrapper {
+	.authoring-topbar {
+		height: 30px;
 		.lock-info {
 			background: rgba(229,28,35,0.3);
 			width: 30px;
@@ -32,13 +33,6 @@
 			text-align: center;
 			.border-radius(50%);
 			margin-right: 10px;
-		}
-		.page-nav-title {
-			max-width: 400px;
-			overflow: hidden;
-			white-space: nowrap;
-			text-overflow: ellipsis;
-			padding-right: 15px;
 		}
 		.lock-text {
 			color: #e51c23;
@@ -71,6 +65,7 @@
 			padding: 4px 10px 3px;
 			margin-top: 5px;
 			margin-right: 20px;
+			float: none;
 		}
 	}
 	&.auth-sendto {
@@ -94,6 +89,7 @@
 	left: @tablist-width + @article-tabpane-padding;
 	right: @tablist-width + @article-tabpane-padding;
 	bottom: 0;
+        height: calc(~'100% - 30px');
 	overflow-y: auto;
 }
 
@@ -103,7 +99,7 @@
 .medium-editor-toolbar-actions {
 	li button {
 		height: 40px !important;
-		min-width: 40px !important; 
+		min-width: 40px !important;
 		padding-top: 10px !important;
 	}
 }
@@ -113,6 +109,13 @@
 
 .text-editor-info {
 	font-size: 89%;
+}
+
+.text-editor {
+	.sderror {
+		border-bottom: 1px dotted #cc0000;
+		background-color: rgba(204, 0, 0, 0.08);
+	}
 }
 
 
@@ -178,7 +181,7 @@
 		}
 		> li {
 			float: left;
-			border-right: 1px solid #333;	
+			border-right: 1px solid #333;
 		}
 	}
 	.multiedit-item {
@@ -221,7 +224,7 @@
 .authoring-dashboard {
 	padding: 40px;
 	overflow: auto;
-	
+
 	.card-list {
 		width: 0;
 		margin: 0 auto;
@@ -336,25 +339,28 @@
 	}
 }
 
+.terms-box {
+	position: relative;
+	.dropdown-menu.nested-menu {
+		width: 100%;
+	}
+}
+
 // Publish pane
 // -------------------------------------------------
 
 .send-to-pane {
 	width: @send-to-pane-width;
-	background: #3b3b3b;
 	position: absolute;
-	top: @nav-height; bottom: 0;
-	right: -@send-to-pane-width;
-	.transition(all ease 0.3s);
-	&.show {
-		right: 0;
-	}
+	top: 0; bottom: 0;
+        right: 0;
+	
 	header {
 		height: @nav-height;
 		border-bottom: 1px solid #424242;
 		padding: 0 20px;
 		h3 {
-			color: @white;	
+			color: @white;
 			line-height: @nav-height;
 			font-size: 20px;
 			.text-light();
@@ -397,7 +403,7 @@
 				padding: 0 0 15px;
 
 				&:nth-child(2n) {
-					margin-left: 15px; 
+					margin-left: 15px;
 				}
 
 				button {
@@ -452,10 +458,40 @@
 					&.save {
 						background: #5ea9c8;
 					}
+
+					&.actioning {
+						background-image: url("../../images/loading-large.gif");
+						background-repeat: no-repeat;
+	    				background-position: center;
+					}
+					&.actioning:disabled {
+						opacity: 0.5;
+					}
+					&:disabled {
+						&:not(.active) {
+							background: #496773 !important;
+						}
+						&:hover {
+							cursor: default;
+						}
+						opacity: 0.5;
+					}
 				}
 			}
 		}
 	}
+}
+
+.pane-holder {
+    position: absolute;
+    background: #3b3b3b;
+    width: @send-to-pane-width;
+    height: 100%;
+    right: -@send-to-pane-width;
+    .transition(all ease 0.3s);
+    &.show {
+        right: 0;
+    }
 }
 
 .widget {
@@ -468,64 +504,14 @@
 	.link-list .btn {
 		display: block;
 		width: 100%;
-		background-color: #fff;
-		color: #626262;
+		margin-bottom: 10px;
 	}
 }
 
-// Responsive
-// -------------------------------------------------
-
-// @media (max-width: 1024px) {
-
-
-// 	.main-article-container {
-// 		padding-left:20px;
-// 		padding-right:20px;
-// 	}
-// 	.tabpane {
-// 		width:@tabpane-width - 30;
-// 	}
-
-// 	.main-article-title {
-// 		overflow: hidden;
-// 		height: 36px;
-// 		text-overflow: ellipsis;
-// 		white-space: nowrap;
-// 		max-width:280px;
-// 	}
-
-// }
-
-
-// @media (max-width: 768px) {
-// 	.main-article-title {
-// 		max-width:200px;
-// 	}
-// }
-
-// @media (max-width: 670px) {
-// 	.main-article-title {
-// 		 display:none !important;
-// 	}
-// }
-
-// @media (max-width: 480px) {
-	
-// 	.main-article-title {
-// 		display:none;
-// 	}
-
-// 	.tablist {
-// 		top:@subnav-mobile-height+@topspace;
-// 	}
-// 	.tabpane {
-// 		top:@subnav-mobile-height+@topspace;
-// 	}
-// 	.main-article-container {
-// 		padding-top: 60px;
-// 	}
-
-// }
-
-
+.modal-footer {
+	.pagination-box {
+		.page-info {
+			float: left;
+		}
+	}
+}

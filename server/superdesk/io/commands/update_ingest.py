@@ -29,7 +29,9 @@ from superdesk.upload import url_for_media
 from superdesk.media.media_operations import download_file_from_url, process_file
 from superdesk.media.renditions import generate_renditions
 from superdesk.io.iptc import subject_codes
-from apps.archive.common import generate_guid, GUID_NEWSML, GUID_FIELD
+from apps.archive.common import generate_guid, GUID_NEWSML, GUID_FIELD, FAMILY_ID
+from superdesk.celery_task_utils import mark_task_as_not_running, is_task_running
+
 
 UPDATE_SCHEDULE_DEFAULT = {'minutes': 5}
 LAST_UPDATED = 'last_updated'
@@ -133,6 +135,15 @@ def get_task_id(provider):
     return 'update-ingest-{0}-{1}'.format(provider.get('name'), provider.get(superdesk.config.ID_FIELD))
 
 
+def is_updatable(provider):
+    """Test if given provider has service that can update it.
+
+    :param provider
+    """
+    service = providers.get(provider.get('type'))
+    return hasattr(service, 'update')
+
+
 class UpdateIngest(superdesk.Command):
     """Update ingest providers."""
 
@@ -142,7 +153,8 @@ class UpdateIngest(superdesk.Command):
 
     def run(self, provider_type=None):
         for provider in superdesk.get_resource_service('ingest_providers').get(req=None, lookup={}):
-            if is_valid_type(provider, provider_type) and is_scheduled(provider) and not is_closed(provider):
+            if (is_valid_type(provider, provider_type) and is_updatable(provider)
+               and is_scheduled(provider) and not is_closed(provider)):
                 kwargs = {
                     'provider': provider,
                     'rule_set': get_provider_rule_set(provider),
@@ -159,29 +171,44 @@ def update_provider(provider, rule_set=None, routing_scheme=None):
     Fetches items from ingest provider as per the configuration, ingests them into Superdesk and
     updates the provider.
     """
-    update = {
-        LAST_UPDATED: utcnow()
-    }
+    if is_task_running(provider['name'],
+                       provider[superdesk.config.ID_FIELD],
+                       provider.get('update_schedule', UPDATE_SCHEDULE_DEFAULT)):
+        return
 
-    for items in providers[provider.get('type')].update(provider):
-        ingest_items(items, provider, rule_set, routing_scheme)
-        stats.incr('ingest.ingested_items', len(items))
-        if items:
-            update[LAST_ITEM_UPDATE] = utcnow()
-    ingest_service = superdesk.get_resource_service('ingest_providers')
-    ingest_service.system_update(provider[superdesk.config.ID_FIELD], update, provider)
+    if provider.get('type') == 'search':
+        return
 
-    if LAST_ITEM_UPDATE not in update and get_is_idle(provider):
-        notify_and_add_activity(
-            ACTIVITY_EVENT,
-            'Provider {{name}} has gone strangely quiet. Last activity was on {{last}}',
-            resource='ingest_providers',
-            user_list=ingest_service._get_administrators(),
-            name=provider.get('name'),
-            last=provider[LAST_ITEM_UPDATE].replace(tzinfo=timezone.utc).astimezone(tz=None).strftime("%c"))
+    if not is_updatable(provider):
+        return
 
-    logger.info('Provider {0} updated'.format(provider[superdesk.config.ID_FIELD]))
-    push_notification('ingest:update', provider_id=str(provider[superdesk.config.ID_FIELD]))
+    try:
+        update = {
+            LAST_UPDATED: utcnow()
+        }
+
+        for items in providers[provider.get('type')].update(provider):
+            ingest_items(items, provider, rule_set, routing_scheme)
+            stats.incr('ingest.ingested_items', len(items))
+            if items:
+                update[LAST_ITEM_UPDATE] = utcnow()
+        ingest_service = superdesk.get_resource_service('ingest_providers')
+        ingest_service.system_update(provider[superdesk.config.ID_FIELD], update, provider)
+
+        if LAST_ITEM_UPDATE not in update and get_is_idle(provider):
+            notify_and_add_activity(
+                ACTIVITY_EVENT,
+                'Provider {{name}} has gone strangely quiet. Last activity was on {{last}}',
+                resource='ingest_providers',
+                user_list=ingest_service._get_administrators(),
+                name=provider.get('name'),
+                last=provider[LAST_ITEM_UPDATE].replace(tzinfo=timezone.utc).astimezone(tz=None).strftime("%c"))
+
+        logger.info('Provider {0} updated'.format(provider[superdesk.config.ID_FIELD]))
+        push_notification('ingest:update', provider_id=str(provider[superdesk.config.ID_FIELD]))
+    finally:
+        mark_task_as_not_running(provider['name'],
+                                 provider[superdesk.config.ID_FIELD])
 
 
 def process_anpa_category(item, provider):
@@ -287,6 +314,9 @@ def ingest_items(items, provider, rule_set=None, routing_scheme=None):
         ingested = ingest_item(item, provider, rule_set, routing_scheme)
         if not ingested:
             failed_items.add(item[GUID_FIELD])
+
+    app.data._search_backend('ingest').bulk_insert('ingest', [item for item in all_items
+                                                              if item[GUID_FIELD] not in failed_items])
     if failed_items:
         logger.error('Failed to ingest the following items: %s', failed_items)
     return failed_items
@@ -295,6 +325,7 @@ def ingest_items(items, provider, rule_set=None, routing_scheme=None):
 def ingest_item(item, provider, rule_set=None, routing_scheme=None):
     try:
         item.setdefault(superdesk.config.ID_FIELD, generate_guid(type=GUID_NEWSML))
+        item[FAMILY_ID] = item[superdesk.config.ID_FIELD]
         providers[provider.get('type')].provider = provider
 
         item['ingest_provider'] = str(provider[superdesk.config.ID_FIELD])
@@ -328,10 +359,10 @@ def ingest_item(item, provider, rule_set=None, routing_scheme=None):
         if old_item:
             # In case we already have the item, preserve the _id
             item[superdesk.config.ID_FIELD] = old_item[superdesk.config.ID_FIELD]
-            ingest_service.put(item[superdesk.config.ID_FIELD], item)
+            ingest_service.put_in_mongo(item[superdesk.config.ID_FIELD], item)
         else:
             try:
-                ingest_service.post([item])
+                ingest_service.post_in_mongo([item])
             except HTTPException as e:
                 logger.error("Exception while persisting item in ingest collection", e)
 

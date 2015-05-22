@@ -34,7 +34,7 @@ describe('itemListService', function() {
                 },
                 size: 25,
                 from: 0,
-                sort: [{versioncreated: 'desc'}]
+                sort: [{_updated: 'desc'}]
             }
         });
     }));
@@ -157,8 +157,8 @@ describe('itemListService', function() {
         });
         $rootScope.$digest();
         expect(queryParams.source.query.filtered.filter.and).toEqual([
-            {range: {firstcreated: {lte: 1, gte: 2}}},
-            {range: {versioncreated: {lte: 3, gte: 4}}}
+            {range: {_created: {lte: 1, gte: 2}}},
+            {range: {_updated: {lte: 3, gte: 4}}}
         ]);
     }));
 
@@ -197,7 +197,7 @@ describe('itemListService', function() {
         $rootScope.$digest();
         expect(queryParams.source.query.filtered.query).toEqual({
             query_string: {
-                query: 'headline:(h) subject.name:(s) slugline:(k) unique_name:(u) body_html:(b)',
+                query: 'headline:(*h*) subject.name:(*s*) slugline:(*k*) unique_name:(*u*) body_html:(*b*)',
                 lenient: false,
                 default_operator: 'AND'
             }
@@ -216,7 +216,7 @@ describe('itemListService', function() {
         $rootScope.$digest();
         expect(queryParams.source.query.filtered.query).toEqual({
             query_string: {
-                query: 'headline:(s) subject.name:(s) slugline:(s) unique_name:(s) body_html:(s)',
+                query: 'headline:(*s*) subject.name:(*s*) slugline:(*s*) unique_name:(*s*) body_html:(*s*)',
                 lenient: false,
                 default_operator: 'OR'
             }

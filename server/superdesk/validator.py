@@ -9,20 +9,19 @@
 # at https://www.sourcefabric.org/superdesk/license
 
 import re
+import superdesk
 
 from bson import ObjectId
-
 from eve.io.mongo import Validator
 from eve.utils import config
 from werkzeug.datastructures import FileStorage
-
-import superdesk
 
 
 ERROR_PATTERN = {'pattern': 1}
 ERROR_UNIQUE = {'unique': 1}
 ERROR_MINLENGTH = {'minlength': 1}
 ERROR_REQUIRED = {'required': 1}
+ERROR_JSON_LIST = {'json_list': 1}
 
 
 class SuperdeskValidator(Validator):
@@ -47,7 +46,7 @@ class SuperdeskValidator(Validator):
             :param value: field value.
         """
         regex = "^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@" \
-                "(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+(?:\.[a-z0-9](?:[a-z0-9-]{0,4}[a-z0-9])?)?$"
+                "(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+(?:\.[a-z0-9](?:[a-z0-9-]{0,4}[a-z0-9])?)*$"
         if not re.match(regex, value, re.IGNORECASE):
             self._error(field, ERROR_PATTERN)
 
@@ -112,3 +111,8 @@ class SuperdeskValidator(Validator):
                                       or not self.ignore_none_values)
         for field in missing:
             self._error(field, ERROR_REQUIRED)
+
+    def _validate_type_json_list(self, field, value):
+        """It will fail later when loading."""
+        if not isinstance(value, type('')):
+            self._error(field, ERROR_JSON_LIST)

@@ -11,6 +11,7 @@
 
 import os
 from datetime import datetime, timedelta
+from superdesk.io.commands.update_ingest import LAST_ITEM_UPDATE
 import superdesk.tests as tests
 from behave import given, when, then  # @UnresolvedImport
 from flask import json
@@ -36,6 +37,8 @@ from superdesk.tests import test_user, get_prefixed_url, set_placeholder
 from re import findall
 from eve.utils import ParsedRequest
 import shutil
+from apps.dictionaries.resource import DICTIONARY_FILE
+import pprint
 
 external_url = 'http://thumbs.dreamstime.com/z/digital-nature-10485007.jpg'
 
@@ -48,6 +51,7 @@ def test_json(context):
     context_data = json.loads(apply_placeholders(context, context.text))
     assert_equal(json_match(context_data, response_data), True,
                  msg=str(context_data) + '\n != \n' + str(response_data))
+    return response_data
 
 
 def json_match(context_data, response_data):
@@ -284,7 +288,8 @@ def step_impl_fetch_from_provider_ingest_using_routing(context, provider_name, g
 
 
 def fetch_from_provider(context, provider_name, guid, routing_scheme=None):
-    provider = get_resource_service('ingest_providers').find_one(name=provider_name, req=None)
+    ingest_provider_service = get_resource_service('ingest_providers')
+    provider = ingest_provider_service.find_one(name=provider_name, req=None)
     provider['routing_scheme'] = routing_scheme
     provider_service = context.provider_services[provider.get('type')]
     provider_service.provider = provider
@@ -301,24 +306,24 @@ def fetch_from_provider(context, provider_name, guid, routing_scheme=None):
     failed = context.ingest_items(items, provider, rule_set=provider.get('rule_set'),
                                   routing_scheme=provider.get('routing_scheme'))
     assert len(failed) == 0, failed
+
+    provider = ingest_provider_service.find_one(name=provider_name, req=None)
+    ingest_provider_service.system_update(provider['_id'], {LAST_ITEM_UPDATE: utcnow()}, provider)
+
     for item in items:
         set_placeholder(context, '{}.{}'.format(provider_name, item['guid']), item['_id'])
 
 
 @when('we post to "{url}"')
 def step_impl_when_post_url(context, url):
-    with context.app.mail.record_messages() as outbox:
-        data = apply_placeholders(context, context.text)
-        url = apply_placeholders(context, url)
+    post_data(context, url)
 
-        if url in ('/users', 'users'):
-            user = json.loads(data)
-            user.setdefault('needs_activation', False)
-            data = json.dumps(user)
-        context.response = context.client.post(get_prefixed_url(context.app, url),
-                                               data=data, headers=context.headers)
-        store_placeholder(context, url)
-        context.outbox = outbox
+
+def set_user_default(url, data):
+    if is_user_resource(url):
+        user = json.loads(data)
+        user.setdefault('needs_activation', False)
+        data = json.dumps(user)
 
 
 def get_response_etag(response):
@@ -342,18 +347,39 @@ def store_placeholder(context, url):
             setattr(context, get_resource_name(url), item)
 
 
-@when('we post to "{url}" with success')
-def step_impl_when_post_url_with_success(context, url):
+def post_data(context, url, success=False):
     with context.app.mail.record_messages() as outbox:
         data = apply_placeholders(context, context.text)
         url = apply_placeholders(context, url)
+        set_user_default(url, data)
         context.response = context.client.post(get_prefixed_url(context.app, url),
                                                data=data, headers=context.headers)
-        assert_ok(context.response)
+        if success:
+            assert_ok(context.response)
+
         item = json.loads(context.response.get_data())
-        if item.get('_id'):
-            setattr(context, get_resource_name(url), item)
         context.outbox = outbox
+        store_placeholder(context, url)
+        return item
+
+
+@when('we post to "{url}" with "{tag}" and success')
+def step_impl_when_post_url_with_tag(context, url, tag):
+    item = post_data(context, url, True)
+    if item.get('_id'):
+        set_placeholder(context, tag, item.get('_id'))
+
+
+@given('we have "{url}" with "{tag}" and success')
+def step_impl_given_post_url_with_tag(context, url, tag):
+    item = post_data(context, url, True)
+    if item.get('_id'):
+        set_placeholder(context, tag, item.get('_id'))
+
+
+@when('we post to "{url}" with success')
+def step_impl_when_post_url_with_success(context, url):
+    post_data(context, url, True)
 
 
 @when('we put to "{url}"')
@@ -529,16 +555,16 @@ def step_impl_when_upload_image_with_guid(context, file_name, destination, guid)
 @when('we upload a new dictionary with success')
 def when_upload_dictionary(context):
     data = json.loads(apply_placeholders(context, context.text))
-    upload_file(context, '/dictionary_upload', 'test_dict.txt', 'dictionary_file', data)
+    upload_file(context, '/dictionaries', 'test_dict.txt', DICTIONARY_FILE, data)
     assert_ok(context.response)
 
 
 @when('we upload to an existing dictionary with success')
 def when_upload_patch_dictionary(context):
     data = json.loads(apply_placeholders(context, context.text))
-    url = apply_placeholders(context, '/dictionary_upload/#dictionary_upload._id#')
-    etag = apply_placeholders(context, '#dictionary_upload._etag#')
-    upload_file(context, url, 'test_dict2.txt', 'dictionary_file', data, 'patch', [('If-Match', etag)])
+    url = apply_placeholders(context, '/dictionaries/#dictionaries._id#')
+    etag = apply_placeholders(context, '#dictionaries._etag#')
+    upload_file(context, url, 'test_dict2.txt', DICTIONARY_FILE, data, 'patch', [('If-Match', etag)])
     assert_ok(context.response)
 
 
@@ -587,7 +613,13 @@ def step_impl_then_get_new(context):
     assert_ok(context.response)
     expect_json_contains(context.response, 'self', path='_links')
     if context.text is not None:
-        test_json(context)
+        return test_json(context)
+
+
+@then('we get next take')
+def step_impl_then_get_next_take(context):
+    data = step_impl_then_get_new(context)
+    set_placeholder(context, 'TAKE', data['_id'])
 
 
 @then('we get error {code}')
@@ -602,12 +634,17 @@ def step_impl_then_get_list(context, total_count):
     assert_200(context.response)
     data = get_json_data(context.response)
     int_count = int(total_count.replace('+', ''))
+
+    if int_count == 0 or not context.text:
+        return
+
     if '+' in total_count:
         assert int_count <= data['_meta']['total'], '%d items is not enough' % data['_meta']['total']
     else:
         assert int_count == data['_meta']['total'], 'got %d' % (data['_meta']['total'])
-    if int_count == 0 or not context.text:
-        return
+
+    pp = pprint.PrettyPrinter(indent=4)
+    pp.pprint(data)
     test_json(context)
 
 
@@ -615,6 +652,12 @@ def step_impl_then_get_list(context, total_count):
 def step_impl_then_get_nofield(context, field):
     assert_200(context.response)
     expect_json_not_contains(context.response, field)
+
+
+@then('expect json in "{path}"')
+def step_impl_then_get_nofield_in_path(context, path):
+    assert_200(context.response)
+    expect_json(context.response, context.text, path)
 
 
 @then('we get existing resource')
@@ -625,7 +668,7 @@ def step_impl_then_get_existing(context):
 
 @then('we get OK response')
 def step_impl_then_get_ok(context):
-    assert_ok(context.response)
+    assert_200(context.response)
 
 
 @then('we get response code {code}')
@@ -642,6 +685,7 @@ def step_impl_then_get_updated(context):
 
 @then('we get "{key}" in "{url}"')
 def step_impl_then_get_key_in_url(context, key, url):
+    url = apply_placeholders(context, url)
     res = context.client.get(get_prefixed_url(context.app, url), headers=context.headers)
     assert_200(res)
     expect_json_contains(res, key)
@@ -1028,7 +1072,8 @@ def we_reset_password_for_user(context):
 
 @when('we switch user')
 def when_we_switch_user(context):
-    user = {'username': 'test-user-2', 'password': 'pwd', 'is_active': True, 'needs_activation': False}
+    user = {'username': 'test-user-2', 'password': 'pwd', 'is_active': True,
+            'needs_activation': False, 'sign_off': 'foo'}
     tests.setup_auth_user(context, user)
     set_placeholder(context, 'USERS_ID', str(context.user['_id']))
 
@@ -1326,14 +1371,17 @@ def then_field_is_populated(context, field_name):
     assert resp[field_name].get('user', None) is not None, 'item is not populated'
 
 
-@when('we publish "{item_id}"')
-def step_impl_when_publish_url(context, item_id):
+@when('we publish "{item_id}" with "{pub_type}" type and "{state}" state')
+def step_impl_when_publish_url(context, item_id, pub_type, state):
     item_id = apply_placeholders(context, item_id)
     res = get_res('/archive/' + item_id, context)
     headers = if_match(context, res.get('_etag'))
-
-    context.response = context.client.patch(get_prefixed_url(context.app, '/archive/publish/' + item_id),
-                                            data='{"state": "published"}', headers=headers)
+    context_data = {"state": state}
+    if context.text:
+        context_data.update(json.loads(context.text))
+    data = json.dumps(context_data)
+    context.response = context.client.patch(get_prefixed_url(context.app, '/archive/{}/{}'.format(pub_type, item_id)),
+                                            data=data, headers=headers)
 
 
 @then('the ingest item is routed based on routing scheme and rule "{rule_name}"')
@@ -1367,7 +1415,7 @@ def validate_routed_item(context, rule_name, is_routed, is_transformed=False):
                     {'term': {'state': state}}
                 ]
             }
-            item = get_archive_items(query)
+            item = get_archive_items(query) + get_published_items(query)
 
             if is_routed:
                 assert len(item) > 0, 'No routed items found for criteria: ' + str(query)
@@ -1376,11 +1424,16 @@ def validate_routed_item(context, rule_name, is_routed, is_transformed=False):
                 assert item[0]['task']['stage'] == str(destination['stage'])
                 assert item[0]['state'] == state
 
+                if destination.get('destination_groups'):
+                    context_data = [str(g) for g in destination.get('destination_groups', [])]
+                    response_data = item[0]['destination_groups']
+                    assert_equal(json_match(context_data, response_data), True,
+                                 msg=str(context_data) + '\n != \n' + str(response_data))
+
                 if is_transformed:
                     assert item[0]['abstract'] == 'Abstract has been updated'
 
-                assert_items_in_package(item[0], state,
-                                        str(destination['desk']), str(destination['stage']))
+                assert_items_in_package(item[0], state, str(destination['desk']), str(destination['stage']))
             else:
                 assert len(item) == 0
 
@@ -1424,6 +1477,13 @@ def get_archive_items(query):
     return list(get_resource_service('archive').get(lookup=None, req=req))
 
 
+def get_published_items(query):
+    req = ParsedRequest()
+    req.max_results = 100
+    req.args = {'filter': json.dumps(query)}
+    return list(get_resource_service('published').get(lookup=None, req=req))
+
+
 def assert_items_in_package(item, state, desk, stage):
     if item.get('groups'):
         terms = [{'term': {'_id': ref.get('residRef')}}
@@ -1437,3 +1497,24 @@ def assert_items_in_package(item, state, desk, stage):
             assert item.get('state') == state
             assert item.get('task', {}).get('desk') == desk
             assert item.get('task', {}).get('stage') == stage
+
+
+@given('I logout')
+def logout(context):
+    we_have_sessions_get_id(context, '/sessions')
+    step_impl_when_delete_url(context, '/auth/{}'.format(context.session_id))
+    assert_200(context.response)
+
+
+@then('we get "{url}" and match')
+def we_get_and_match(context, url):
+    response_data = get_res(url, context)
+    context_data = json.loads(apply_placeholders(context, context.text))
+    assert_equal(json_match(context_data, response_data), True,
+                 msg=str(context_data) + '\n != \n' + str(response_data))
+
+
+@then('there is no "{key}" in "{namespace}" preferences')
+def there_is_no_key_in(context, key, namespace):
+    data = get_json_data(context.response)['user_preferences']
+    assert key not in data[namespace], 'key "%s" is in %s' % (key, data[namespace])
