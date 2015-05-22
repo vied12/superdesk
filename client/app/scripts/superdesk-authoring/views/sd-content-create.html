@@ -20,9 +20,10 @@
     </button>
 </li>
 <li class="divider"></li>
-<li>
-    <button ng-click="content.createHighlight()">
-        <i class="icon-plus-small icon-round icon-white"></i> {{ :: 'Highlight Package' | translate }}
+<li><span>{{ :: 'From template' | translate }}:</span></li>
+<li ng-repeat="template in contentTemplates._items">
+    <button ng-click="content.createFromTemplate(template)">
+        <i class="icon-plus-small icon-round icon-white"></i> {{ :: template.template_name }}
     </button>
 </li>
 <li class="divider" ng-if="openUpload"></li>

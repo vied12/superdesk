@@ -4,13 +4,7 @@
 			<label translate>GUID</label>
 			<div class="data">{{item.guid}}</div>
 		</li>
-		<li>
-			<label translate>Take key</label>
-			<div class="data">
-				<input type="text" ng-model="item.anpa_take_key" ng-change="autosave(item)" ng-disabled="!_editable">
-			</div>
-		</li>
-		<li>
+        <li>
 			<label translate>Unique name</label>
 			<div class="data">
 				<input type="text" ng-model="item.unique_name" ng-change="autosave(item)" ng-disabled="!_editable || !unique_name_editable">
@@ -26,19 +20,13 @@
 			<label translate>Type</label>
 			<div class="data">{{item.type}}</div>
 		</li>
-		<li>
-			<label translate>By</label>
-			<div class="data">
-				<input type="text" ng-model="item.byline" ng-change="autosave(item)" ng-disabled="!_editable">
-			</div>
-		</li>
 		<li ng-if="item.original_source">
 			<label translate>Original source</label>
 			<div class="data">{{ item.original_source}}</div>
 		</li>
-		<li ng-if="item.ingest_provider">
-			<label translate>Ingest provider</label>
-			<div class="data" sd-meta-ingest data-provider="item.ingest_provider"></div>
+		<li>
+			<label translate>Source</label>
+			<div class="data" sd-meta-ingest data-item="item"></div>
 		</li>
 		<li ng-if="item.ingest_provider_sequence">
 			<label translate>Provider sequence</label>
@@ -49,7 +37,7 @@
 			<div class="data">{{item.pubstatus}}</div>
 		</li>
 		<li ng-if="item.firstcreated">
-			<label translate>First created</label>
+			<label translate>Created</label>
 			<div class="data" sd-reldate-complex ng-model="item.firstcreated"></div>
 		</li>
 		<li ng-if="item.versioncreated">
@@ -59,10 +47,6 @@
 		<li ng-if="item.expiry">
 			<label translate>Expiry</label>
 			<div class="data" sd-reldate-complex ng-model="item.expiry"></div>
-		</li>
-		<li ng-if="item.provider">
-			<label translate>Provider</label>
-			<div class="data" sd-meta-ingest data-provider="item.ingest_provider">{{ item.provider }}</div>
 		</li>
 		<li>
 			<label translate>Urgency</label>
@@ -109,7 +93,7 @@
 		<li class="terms-box">
 			<label translate>Keywords</label>
 			<div sd-meta-words-list data-item="item" data-field="keywords" data-change="autosave(item)" data-list="item.keywords" data-disabled="!_editable"></div>
-		</li>		
+		</li>
 		<li>
 			<label translate>Located</label>
 			<div class="data">
@@ -117,16 +101,19 @@
 			</div>
 		</li>
 		<li>
-			<label translate>Dateline</label>
-			<div class="data">
-				<input type="text" ng-model="item.dateline" ng-disabled="!_editable" ng-change="autosave(item)">
-			</div>
-		</li>
-		<li>
 			<label translate>Language</label>
 			<div class="data">
 				<input type="text" ng-model="item.language" ng-disabled="!_editable" ng-change="autosave(item)">
 			</div>
+		</li>
+		<li>
+			<label translate>Associated</label>
+			<a ng-show="associatedItem != null" ng-href="#/authoring/{{item.related_to}}" title="{{ associatedItem.slugline || associatedItem.headline }}">
+	            <div ng-show="associatedItem.slugline || associatedItem.headline">
+	                {{ associatedItem.slugline || associatedItem.headline | uppercase}}
+	            </div>
+	            <div ng-hide="associatedItem.slugline || associatedItem.headline" translate>Blank headline received</div>
+	        </a>
 		</li>
 		<li ng-if="item.copyrightholder">
 			<label translate>Copyright</label>
@@ -138,6 +125,7 @@
 		</li>
 	</ul>
 
+
 	<div sd-toggle-box data-title="Task details" data-open="true" ng-if="item.task">
 		<ul class="basic-list task-info">
 			<li ng-if="item.slugline" class="auto">
@@ -146,7 +134,7 @@
 			</li>
 			<li ng-if="item.description" class="auto">
 				<label translate>Description</label>
-				<div class="data">{{item.description}}</div>
+				<div>{{item.description}}</div>
 			</li>
 			<li ng-if="item.task.status">
 				<label translate>Status</label>
@@ -167,6 +155,15 @@
 			<li ng-if="item.task.user">
 				<label translate>Assignee</label>
 				<div class="data">{{userLookup[item.task.user].display_name}}</div>
+			</li>
+		</ul>
+	</div>
+	<div sd-toggle-box data-title="Publishing" data-open="true">
+		<ul class="basic-list">
+			<li class="auto">
+				<label translate>Publish Schedule</label>
+				<div sd-datepicker ng-model="item.publish_schedule_date"></div>
+				<div sd-timepicker ng-model="item.publish_schedule_time"></div>
 			</li>
 		</ul>
 	</div>

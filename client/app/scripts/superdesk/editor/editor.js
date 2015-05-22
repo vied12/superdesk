@@ -11,9 +11,55 @@
 
 'use strict';
 
-var TEXT_TYPE = 3;
+var TEXT_TYPE = 3,
+    MARKER_CLASS = 'sdmark';
+
+function click(target) {
+    target.dispatchEvent(new MouseEvent('click'));
+}
 
 function EditorService() {
+    this.settings = {spellcheck: true};
+    this.stopEvents = false;
+    this.addEventListeners = addEventListeners;
+    this.removeEventListeners = removeEventListeners;
+
+    var vm = this;
+
+    /**
+     * Store current anchor position within given node
+     */
+    this.storeSelection = function storeSelection(node) {
+        var selection = document.getSelection();
+        if (selection.anchorNode == null || selection.anchorNode.nodeType !== TEXT_TYPE) {
+            return;
+        }
+
+        var next = selection.anchorNode.splitText(selection.anchorOffset),
+            span = document.createElement('span');
+        span.classList.add(MARKER_CLASS);
+        selection.anchorNode.parentNode.insertBefore(span, next);
+    };
+
+    /**
+     * Reset stored anchor position in given node
+     */
+    this.resetSelection = function resetSelection(node, data) {
+        var marks = node.getElementsByClassName(MARKER_CLASS),
+            selection = document.getSelection(),
+            range = document.createRange();
+
+        if (selection.rangeCount) {
+            selection.removeAllRanges();
+        }
+
+        while (marks.length) {
+            var mark = marks.item(0);
+            range.setStartBefore(mark);
+            selection.addRange(range);
+            mark.parentNode.removeChild(mark);
+        }
+    };
 
     this.clear = function() {
         this.elem = null;
@@ -28,13 +74,13 @@ function EditorService() {
 
     this.disableEditorToolbar = function disableEditorToolbar() {
         if (this.editor) {
-            this.editor.toolbar.classList.add('ng-hide');
+            this.editor.toolbar.toolbar.classList.add('ng-hide');
         }
     };
 
     this.enableEditorToolbar = function enableEditorToolbar() {
         if (this.editor) {
-            this.editor.toolbar.classList.remove('ng-hide');
+            this.editor.toolbar.toolbar.classList.remove('ng-hide');
         }
     };
 
@@ -67,6 +113,29 @@ function EditorService() {
     };
 
     this.clear(); // init
+
+    function addEventListeners(elem) {
+        elem.addEventListener('blur', stopEventListener);
+        elem.addEventListener('input', stopEventListener);
+        elem.addEventListener('focus', stopEventListener);
+        elem.addEventListener('select', stopEventListener);
+        document.body.addEventListener('focus', stopEventListener, true);
+    }
+
+    function removeEventListeners(elem) {
+        elem.removeEventListener('blur', stopEventListener);
+        elem.removeEventListener('input', stopEventListener);
+        elem.removeEventListener('focus', stopEventListener);
+        elem.removeEventListener('select', stopEventListener);
+        document.body.removeEventListener('focus', stopEventListener);
+    }
+
+    function stopEventListener(event) {
+        if (vm.stopEvents) {
+            event.stopImmediatePropagation();
+            event.stopPropagation();
+        }
+    }
 }
 
 function FindReplaceCommand(rootNode) {
@@ -203,11 +272,13 @@ angular.module('superdesk.editor', [])
 
     .service('editor', EditorService)
 
-    .directive('sdTextEditor', ['editor', function (editor) {
+    .directive('sdTextEditor', ['editor', 'spellcheck', '$timeout', function (editor, spellcheck, $timeout) {
 
         var config = {
             buttons: ['bold', 'italic', 'underline', 'quote', 'anchor'],
-            anchorInputPlaceholder: gettext('Paste or type a full link')
+            anchorInputPlaceholder: gettext('Paste or type a full link'),
+            disablePlaceholders: true,
+            spellcheck: false
         };
 
         /**
@@ -266,33 +337,57 @@ angular.module('superdesk.editor', [])
         }
 
         return {
-            scope: {type: '='},
+            scope: {type: '=', config: '='},
             require: 'ngModel',
             templateUrl: 'scripts/superdesk/editor/views/editor.html',
             link: function(scope, elem, attrs, ngModel) {
 
-                var editorElem;
+                var editorElem,
+                    updateTimeout,
+                    renderTimeout;
 
-                function updateModel() {
-                    if (editor.readOnly) {
-                        return;
-                    }
-
-                    scope.$apply(function editorModelUpdate() {
-                        ngModel.$setViewValue(editorElem.html());
-                    });
-                }
+                ngModel.$viewChangeListeners.push(changeListener);
 
                 ngModel.$render = function renderEditor() {
                     editorElem = elem.find(scope.type === 'preformatted' ?  '.editor-type-text' : '.editor-type-html');
+
                     editorElem.empty();
-                    editorElem.html(ngModel.$viewValue || '<p><br></p>');
+                    editorElem.html(ngModel.$viewValue || '');
 
                     editor.elem = editorElem[0];
-                    editor.editor = new window.MediumEditor(editor.elem, config);
+                    editor.addEventListeners(editorElem[0]);
 
-                    editorElem.on('blur', updateModel);
-                    editorElem.on('input', updateModel);
+                    var editorConfig = angular.extend({}, config, scope.config || {});
+                    editor.editor = new window.MediumEditor(editor.elem, editorConfig);
+
+                    editorElem.on('input', function(event) {
+                        $timeout.cancel(updateTimeout);
+                        updateTimeout = $timeout(updateModel, 300, false);
+                    });
+
+                    editorElem.on('contextmenu', function(event) {
+                        if (spellcheck.isErrorNode(event.target)) {
+                            var menu = elem[0].getElementsByClassName('dropdown-menu')[0],
+                                toggle = elem[0].getElementsByClassName('dropdown-toggle')[0];
+                            if (elem.find('.dropdown.open').length) {
+                                click(toggle);
+                            }
+
+                            scope.suggestions = null;
+                            spellcheck.suggest(event.target.textContent).then(function(suggestions) {
+                                scope.suggestions = suggestions;
+                                scope.replaceTarget = event.target;
+                                $timeout(function() {
+                                    menu.style.left = (event.target.offsetLeft) + 'px';
+                                    menu.style.top = (event.target.offsetTop + event.target.offsetHeight) + 'px';
+                                    menu.style.position = 'absolute';
+                                    click(toggle);
+                                }, 0, false);
+                            });
+
+                            return false;
+                        }
+                    });
 
                     if (scope.type === 'preformatted') {
                         editorElem.on('keydown keyup click', function() {
@@ -303,12 +398,66 @@ angular.module('superdesk.editor', [])
                     }
 
                     scope.$on('$destroy', function() {
-                        editorElem.off();
                         editor.clear();
+                        editor.removeEventListeners(editorElem[0]);
+                        editorElem.off();
                     });
 
                     scope.cursor = {};
+                    autoRenderSpellcheck();
                 };
+
+                scope.replace = function(text) {
+                    scope.replaceTarget.parentNode.replaceChild(document.createTextNode(text), scope.replaceTarget);
+                };
+
+                scope.$on('editor:settings', function() {
+                    if (editor.settings.spellcheck) {
+                        spellcheck.render(editorElem[0]);
+                    } else {
+                        removeSpellcheck(editorElem[0]);
+                    }
+                });
+
+                scope.$on('spellcheck:run', renderSpellcheck);
+
+                function updateModel() {
+                    if (editor.readOnly) {
+                        return;
+                    }
+
+                    var html = removeSpellcheck(editorElem[0]);
+                    scope.$applyAsync(function() {
+                        ngModel.$setViewValue(html);
+                    });
+                }
+
+                function changeListener() {
+                    $timeout.cancel(renderTimeout);
+                    renderTimeout = $timeout(autoRenderSpellcheck, 200, false);
+                }
+
+                function autoRenderSpellcheck() {
+                    if (editor.settings.spellcheck) {
+                        renderSpellcheck();
+                    }
+                }
+
+                function renderSpellcheck() {
+                    spellcheck.render(editorElem[0]);
+                }
+
+                function removeSpellcheck(node) {
+                    if (!node) {
+                        node = editorElem[0];
+                    }
+
+                    var selection = editor.storeSelection(node),
+                        html = spellcheck.clean(node);
+                    node.innerHTML = html;
+                    editor.resetSelection(node, selection);
+                    return html;
+                }
             }
         };
     }]);

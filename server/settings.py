@@ -39,6 +39,9 @@ BANDWIDTH_SAVER = False
 DATE_FORMAT = '%Y-%m-%dT%H:%M:%S+0000'
 PAGINATION_LIMIT = 200
 
+LOG_SERVER_ADDRESS = env('LOG_SERVER_ADDRESS', 'localhost')
+LOG_SERVER_PORT = int(env('LOG_SERVER_PORT', 5555))
+
 APPLICATION_NAME = env('APP_NAME', 'Superdesk')
 server_url = urlparse(env('SUPERDESK_URL', 'http://localhost:5000/api'))
 CLIENT_URL = env('SUPERDESK_CLIENT_URL', 'http://localhost:9000')
@@ -98,7 +101,7 @@ CELERYBEAT_SCHEDULE = {
         # there is internal schedule for updates per provider,
         # so this is minimal interval when an update can occur
         'schedule': timedelta(seconds=30),
-        'options': {'expires': 59}
+        'options': {'expires': 29}
     },
     'ingest:gc': {
         'task': 'superdesk.io.gc_ingest',
@@ -110,6 +113,14 @@ CELERYBEAT_SCHEDULE = {
     },
     'spike:gc': {
         'task': 'apps.archive.content_purge',
+        'schedule': crontab(minute=30)
+    },
+    'publish:transmit': {
+        'task': 'superdesk.publish.transmit',
+        'schedule': timedelta(seconds=10)
+    },
+    'publish:remove_expired': {
+        'task': 'apps.publish.content_purge',
         'schedule': crontab(minute=30)
     }
 }
@@ -133,7 +144,8 @@ INSTALLED_APPS = [
     'superdesk.io.afp',
     'superdesk.io.ftp',
     'superdesk.io.rss',
-    'superdesk.macros',
+    'superdesk.publish',
+    'superdesk.macro_register',
     'superdesk.commands',
 
     'apps.archive',
@@ -155,7 +167,13 @@ INSTALLED_APPS = [
     'apps.publish',
     'apps.macros',
     'apps.dictionaries',
-    'apps.duplication'
+    'apps.duplication',
+    'apps.aap_mm',
+    'apps.spellcheck',
+    'apps.templates',
+    'apps.text_archive',
+    'apps.validators',
+    'apps.validate',
 ]
 
 RESOURCE_METHODS = ['GET', 'POST']
@@ -235,6 +253,10 @@ CONTENT_EXPIRY_MINUTES = 43200
 # 2880 = 2 days in minutes
 INGEST_EXPIRY_MINUTES = 2880
 
+# The number of minutes before published items purged
+# 4320 = 3 days in minutes
+PUBLISHED_ITEMS_EXPIRY_MINUTES = 4320
+
 # This setting can be used to apply a limit on the elastic search queries, it is a limit per shard.
 # A value of -1 indicates that no limit will be applied.
 # If for example the elastic has 5 shards and you wish to limit the number of search results to 1000 then set the value
@@ -250,3 +272,12 @@ MACROS_MODULE = env('MACROS_MODULE', 'macros')
 
 WS_HOST = env('WSHOST', '0.0.0.0')
 WS_PORT = env('WSPORT', '5100')
+
+AAP_MM_USER = env('AAP_MM_USER', None)
+AAP_MM_PASSWORD = env('AAP_MM_PASSWORD', None)
+
+# Defines the maximum value of Publish Sequence Number after which the value will start from 1
+MAX_VALUE_OF_PUBLISH_SEQUENCE = 9999
+
+# Defines default value for Source to be set for manually created articles
+DEFAULT_SOURCE_VALUE_FOR_MANUAL_ARTICLES = env('DEFAULT_SOURCE_VALUE_FOR_MANUAL_ARTICLES', 'AAP')

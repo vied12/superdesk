@@ -6,7 +6,7 @@ Feature: User Resource
         Given empty "users"
         When we create a new user
         """
-        {"username": "foo", "password": "barbar", "email": "foo@bar.com"}
+        {"username": "foo", "password": "barbar", "email": "foo@bar.com", "sign_off": "fb"}
         """
         Then we get new resource
         """
@@ -16,11 +16,20 @@ Feature: User Resource
         And we get activation email
 
     @auth
+    Scenario: Create user with valid email
+        Given empty "users"
+        When we post to "/users"
+        """
+        {"username": "foo", "password": "barbar", "email": "foo@bar.com.au", "sign_off": "fubar"}
+        """
+        Then we get response code 201
+
+    @auth
     Scenario: Test email validation
         Given empty "users"
         When we post to "/users"
         """
-        {"username": "foo", "password": "barbar", "email": "invalid email"}
+        {"username": "foo", "password": "barbar", "email": "invalid email", "sign_off": "asd"}
         """
         Then we get error 400
         """
@@ -163,7 +172,7 @@ Feature: User Resource
         """
         When we post to "/users"
         """
-        {"username": "foo", "password": "barbar", "email": "foo@bar.com"}
+        {"username": "foo", "password": "barbar", "email": "foo@bar.com", "sign_off": "foobar"}
         """
         Then we get new resource
         """
@@ -178,7 +187,7 @@ Feature: User Resource
         """
         When we post to "/users"
         """
-        {"username": "foo", "password": "barbar", "email": "foo@bar.com"}
+        {"username": "foo", "password": "barbar", "email": "foo@bar.com", "sign_off": "foobar"}
         """
         Then we get new resource
         """
@@ -222,7 +231,7 @@ Feature: User Resource
         Given empty "stages"
         When we post to "users"
         """
-        {"username": "foo", "email": "foo@bar.com", "is_active": true}
+        {"username": "foo", "email": "foo@bar.com", "is_active": true, "sign_off": "foobar"}
         """
         Given "desks"
         """

@@ -19,6 +19,8 @@ from superdesk.celery_app import celery
 parsers = []
 providers = {}
 allowed_providers = []
+provider_errors = {}
+publish_errors = []
 logger = logging.getLogger(__name__)
 
 from .commands.remove_expired_content import RemoveExpiredContent
@@ -32,10 +34,16 @@ def init_app(app):
     service = IngestProviderService(endpoint_name, backend=superdesk.get_backend())
     IngestProviderResource(endpoint_name, app=app, service=service)
 
+    from .io_errors import IOErrorsService, IOErrorsResource
+    endpoint_name = 'io_errors'
+    service = IOErrorsService(endpoint_name, backend=superdesk.get_backend())
+    IOErrorsResource(endpoint_name, app=app, service=service)
 
-def register_provider(type, provider):
+
+def register_provider(type, provider, errors):
     providers[type] = provider
     allowed_providers.append(type)
+    provider_errors[type] = dict(errors)
 
 
 @celery.task(soft_time_limit=15)
@@ -96,5 +104,6 @@ import superdesk.io.wenn_parser
 import superdesk.io.teletype
 import superdesk.io.email
 import superdesk.io.dpa
+register_provider('search', None, [])
 
 superdesk.privilege(name='ingest_providers', label='Ingest Channels', description='User can maintain Ingest Channels.')

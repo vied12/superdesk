@@ -1,0 +1,78 @@
+<div class="subnav">
+    <h3 class="page-nav-title" translate>Publish Queue</h3>
+
+    <span class="multi-action-bar">
+        <span id="multi-select-count"
+            translate
+            translate-n="multiSelectCount"
+            translate-plural="{{ multiSelectCount }} Items selected">{{ multiSelectCount }} Item selected
+        </span>
+        <button class="btn" ng-click="scheduleToSend()" ng-show="multiSelectCount > 0 && showResendBtn">resend</button>
+        <button class="btn" ng-click="cancelSchedule()" ng-show="multiSelectCount > 0 && showCancelBtn">cancel</button>
+        <button class="btn" ng-click="cancelSelection()" ng-show="multiSelectCount > 0">cancel selection</button>
+    </span>
+</div>
+
+<section class="main-section ingest-dashboard">
+	<button ng-click="reload()">Refresh</button><i style="float:right;">Last refreshed at: {{ lastRefreshedAt | date:'dd-MM-yyyy HH:mm:ss' }}</i>
+
+    <span>
+        Filter by
+
+        Output Channel:
+        <select id="outputChannelFilter" ng-model="selectedFilterChannel" ng-change="filterSchedule()"
+                ng-options="outputChannel.name for outputChannel in outputChannels" style="width: 20%"></select>
+
+        Subscriber:
+        <select id="subscriberFilter" ng-model="selectedFilterSubscriber" ng-change="filterSchedule()"
+                ng-options="subscriber.name for subscriber in subscribers" style="width: 20%"></select>
+    </span>
+
+	<hr />
+	<table class="table">
+		<thead>
+			<tr>
+				<th>Sequence No</th>
+				<th>Unique Name</th>
+				<th>Headline</th>
+				<th>Content Type</th>
+                <th>Publishing Action</th>
+				<th>Output Channel</th>
+				<th>Subscriber</th>
+				<th>Destination</th>
+				<th>Queued At</th>
+				<th>Scheduled At</th>
+				<th>Transmitted At</th>
+				<th>Status</th>
+				<th>Message</th>
+                <th>Action</th>
+			</tr>
+		</thead>
+        <tbody>
+            <tr ng-repeat="queue_item in publish_queue" class="{{queue_item.state | queueStatus}}">
+                <td>
+                    <input type="checkbox" ng-show="queue_item.state !== 'canceled'" ng-model="queue_item.selected" ng-change="selectQueuedItem(queue_item)" ng-checked="queue_item.selected">
+                    {{ queue_item.published_seq_num }}
+                </td>
+                <td>{{ queue_item.unique_name }}</td>
+                <td>{{ queue_item.headline }}</td>
+                <td>{{ queue_item.content_type }}</td>
+                <td>{{ queue_item.publishing_action }}</td>
+				<td>{{outputChannelLookup[queue_item.output_channel_id].name}}</td>
+				<td>{{subscriberLookup[queue_item.subscriber_id].name}}</td>
+				<td ng-if="queue_item.selector_codes != null && queue_item.selector_codes.length > 0">{{queue_item.destination.name}} {{ queue_item.selector_codes }}</td>
+                <td ng-if="queue_item.selector_codes == null || queue_item.selector_codes.length == 0">{{queue_item.destination.name}}</td>
+				<td>{{queue_item._created | dateTimeStringWithSecs}}</td>
+				<td>{{queue_item.publish_schedule | dateTimeStringWithSecs}}</td>
+				<td>{{queue_item.completed_at | dateTimeStringWithSecs}}</td>
+				<td>{{queue_item.state}}</td>
+				<td>{{queue_item.error_message}}</td>
+                <td>
+                    <button ng-if="queue_item.state === 'success' || queue_item.state === 'error'" ng-click="scheduleToSend(queue_item)">Resend</button>
+                    <button ng-if="queue_item.state === 'pending'" ng-click="cancelSchedule(queue_item)">Cancel</button>
+                </td>
+            </tr>
+        </tbody>
+	</table>
+</section>
+

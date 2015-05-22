@@ -13,8 +13,8 @@ from eve.io.base import DataLayer
 from eve.io.mongo import Mongo
 from eve.utils import config, ParsedRequest
 from eve_elastic import Elastic
-from .utils import import_by_path
 from flask import current_app as app
+from superdesk.aap_mm_datalayer import AAPMMDatalayer
 
 
 class SuperdeskDataLayer(DataLayer):
@@ -26,12 +26,8 @@ class SuperdeskDataLayer(DataLayer):
     def init_app(self, app):
         self.mongo = Mongo(app)
         self.elastic = Elastic(app)
-
-        if 'DEFAULT_FILE_STORAGE' in app.config:
-            self.storage = import_by_path(app.config['DEFAULT_FILE_STORAGE'])()
-            self.storage.init_app(app)
-        else:
-            self.storage = self.driver
+        self.aapmm = AAPMMDatalayer(app)
+        self.storage = self.driver
 
     def find(self, resource, req, lookup):
         return superdesk.get_resource_service(resource).get(req=req, lookup=lookup)

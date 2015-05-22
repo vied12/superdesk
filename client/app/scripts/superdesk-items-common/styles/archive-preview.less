@@ -41,15 +41,26 @@
 	.item {
 		margin-bottom: 15px;
 		position: relative;
+		
 		&:hover {
 			cursor: pointer;
+		}
+
+		.border-radius(2px);
+		border-left: 3px solid #d1d1d1;
+
+		&.locked {
+			border-left-color: @state-color-red;
+		}
+		&.published {
+			border-left-color: @state-color-green;
 		}
 	}
 	.info {
 		.clearfix();
 	}
 	.item-headline {
-		padding-right: 30px;
+		padding-right: 35px;
 		> div {
 			font-size: 14px;
 			color: #000;
@@ -237,8 +248,15 @@
 				padding: 14px;
 				float: left;
 			}
-			.dropdown {
+			.dropdown-big {
 				float: right;
+			}
+			.dropdown {
+				.dropdown-menu li {
+					> a, > button, .dropdown-toggle {
+						min-width: initial;
+					} 
+				}
 			}
 		}
 		.title {
@@ -300,6 +318,13 @@
 				font-style: italic;
 				margin-bottom: 10px;
 				line-height: 22px;
+			}
+			.body-text {
+				h1, h2, h3, h4, h5, h6 {
+					font-size: 14px;
+					line-height: 18px;
+					margin-bottom: 9px;
+				}
 			}
 		}
 	}
@@ -663,7 +688,7 @@
 
 			}
 		}
-		.condensed-preview, {
+		.condensed-preview {
 			position: absolute;
 			right: 0; top: 0; bottom:0; left:0;
 		}

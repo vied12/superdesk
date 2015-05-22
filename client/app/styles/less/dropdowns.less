@@ -1,4 +1,4 @@
-// DROPDOWN MENUS
+    // DROPDOWN MENUS
 // --------------
 
 // Use the .menu class on any <li> element within the topbar or ul.tabs and you'll get some superfancy dropdowns
@@ -19,11 +19,36 @@
 	// The caret makes the toggle a bit too tall in IE7
 	*margin-bottom: -3px;
 	background: transparent;
+        i { vertical-align: sub; }
+        &.animate-icon {
+            .opacity(50);
+            .transition(.5s);
+        }
+        &.animate-icon:hover {
+            .opacity(100);
+        }
 }
 .dropdown-toggle:active,
 .open .dropdown-toggle {
 	outline: 0;
 }
+
+.dropdown .dropdown-toggle i.submenu-icon, .dropdown .nested-toggle i.submenu-icon {
+    position: absolute;
+    top: 50%;
+    right: 2px;
+    margin-top: -8px;
+    opacity: 0.4;
+}
+
+.more-actions .dropdown-toggle > i {
+   opacity: 0.3;
+}
+.more-actions .dropdown-toggle:hover > i,
+.more-actions.open .dropdown-toggle > i {
+   opacity: 1;
+}
+
 
 // Dropdown arrow/caret
 // --------------------
@@ -81,7 +106,7 @@
 	.divider {
 		.nav-divider();
 	}
-
+        
 	// Links within the dropdown menu
 	button {
 		width: 100%;
@@ -105,10 +130,17 @@
 				margin-right: 10px;
 				margin-top: -2px;
 			}
+			&.disabled, &[disabled] {
+				.opacity(50);
+			}
 		}
 		> a, > button {
 			&:hover {
 				background: @dropdownLinkBackgroundHover;
+			}
+			&.disabled:hover, &[disabled]:hover {
+				background: none;
+				cursor: default;
 			}
 		}
 	}
@@ -177,7 +209,7 @@
 	.dropdown-menu {
 		top: auto;
 		bottom: 100%;
-		margin-bottom: 1px;
+		margin-bottom: 0;
 		&:before {
 			top: auto;
 			bottom:-16px;
@@ -192,7 +224,7 @@
 //navigation big dropdown
 .dropdown.dropdown-big, .navbtn.dropdown {
 	.dropdown-toggle {
-		padding: 0 15px 0 25px;
+		padding: 0 15px;
 		display: block;
 		color:@sd-text;
 		height: @subnav-height;
@@ -213,6 +245,7 @@
 			background: #fff;
 			color:@sd-text;
 			box-shadow:-3px 0px 1px -2px #999,3px 0px 1px -2px #999;
+			z-index: 3;
 			&.sd-create-btn {
 				.circle {
 					width: 32px;
@@ -231,7 +264,7 @@
 	.dropdown-menu {
 		.border-radius(0px);
 		border:0;
-		z-index: 1;
+		z-index: 2;
 		margin-top: -1px;
 		min-width: 200px;
 		box-shadow: 0px 1px 2px 1px #aaa;
@@ -272,7 +305,7 @@
 				}
 			}
 			&:active {
-				button {
+				> button {
 					background: @sd-blue;
 					color: #fff;
 				}
@@ -296,4 +329,190 @@
 	padding: 0;
 }
 
+// Activity dropdowns
+// -------------------------------------------------
+.activity-dropdown {
+    .dropdown-menu {
+        .border-radius(0px);
+        border:0;
+        z-index: 1;
+        margin-top: -1px;
+        &:before {
+            display: none;
+        }
+    }
+}
 
+// CLassic dropdown with no arrow
+// -------------------------------------------------
+.dropdown.dropdown-noarrow {
+    .dropdown-menu:before {
+        display: none;
+    }
+    .dropdown {
+        .dropdown-toggle {
+            display: block;
+            padding: 3px 15px;
+            clear: both;
+            font-weight: normal;
+            line-height: 18px;
+            white-space: nowrap;
+        }
+    }
+    &.open li > .dropdown .dropdown-toggle {
+        display: block;
+        padding: 5px 7px;
+        margin: 0;
+        clear: both;
+        font-weight: normal;
+        line-height: 18px;
+        white-space: nowrap;
+    }
+}
+
+// Classic dropdown with bigger width
+// -------------------------------------------------
+.dropdown.dropdown-bigger {
+    .dropdown-menu {
+        min-width: 230px;
+    }
+}
+
+// Dropdown integrated in input field
+// -------------------------------------------------
+.dropdown.input-addon {
+    position: absolute;
+    right: 12px;
+    margin-top: -1px;
+    > .dropdown-toggle {
+        height: 22px;
+        line-height: 0;
+        padding: 2px 6px;
+        box-shadow: none;
+        margin-bottom: 2px;
+        background-color: transparent;
+        .box-shadow(none) !important;
+        > span.caret {
+            padding: 0px;
+            margin-left: 0;
+        }
+    }
+    &.open > .dropdown-toggle {
+        background-color: transparent;
+    }
+}
+
+// Nested dropdowns
+// -------------------------------------------------
+.dropdown {
+	&.open {
+		li > .dropdown {
+			float: none;
+			.dropdown-toggle {
+				margin: 0 10px;
+				min-width: 225px;
+				padding: 6px 10px;
+				line-height: 19px;
+				border-radius: 3px;
+				height: auto;
+				font-size: 13px;
+				text-align: left;
+				.box-shadow(none);
+				i {
+					margin-right: 10px;
+				}
+				&:hover {
+					background: @sd-hover;
+					cursor: default;
+				}
+			}
+                        .dropdown-menu {
+                            display: none;
+                        }
+                        &:hover {
+                            > .dropdown-menu {
+                                display: block;
+                                left: 100%;
+                                right: auto;
+                                top: 0;
+                                min-width: 160px;
+                                &.right-submenu {
+                                    left: auto;
+                                    right: 100%;
+                                }
+                                button {
+                                    min-width: 160px !important;
+                                }
+                            }
+                        }
+		}
+	}
+}
+
+// NESTED DROPDOWN MENUS
+.dropdown.dropdown-nested {
+    .dropdown-toggle {
+        opacity: 0.4;
+        &:hover {
+            opacity: 1;
+        }
+    }
+    &.open {
+        .dropdown-toggle {
+            opacity: 1;
+        }
+    }
+    .dropdown-menu {
+        max-height: 250px;
+        margin-top: 1px;
+        overflow: auto;
+        .nested-toggle {
+            position: relative;
+        }
+        .nested-menu {
+            position: absolute;
+            width: 100%;
+            left: 100%;
+            top: 0;
+            box-sizing: border-box;
+            padding: 10px 0;
+            background-color: white;
+            .transition(all .5s);
+            &.active {
+                left: 0;
+            }
+        }
+        .backlink {
+            display: inline-block;
+            vertical-align: middle;
+            margin-left: 10px;
+            cursor: pointer;
+            height: 27px;
+            & + button {
+                display: inline-block;
+                vertical-align: middle;
+                width: 60%;
+                width: calc(~"100% - 60px");
+                min-width: 0;
+                font-weight: 500;
+                b {
+                    overflow: hidden;
+                    white-space: nowrap;
+                    text-overflow: ellipsis;
+                }
+                b.category-hover {
+                    display: none;
+                }
+                &:hover {
+                    b.category { display: none; }
+                    b.category-hover { display: block; }
+                }
+            }
+        }
+    }
+    &.dropdown-noarrow {
+        .nested-menu {
+            padding: 10px;
+        }
+    }
+}

@@ -33,7 +33,8 @@ describe('Fetch', function() {
                     expect(itemEL.element(by.css('[title="Copy"]')).isDisplayed()).toBe(true);
                     expect(browser.driver.isElementPresent(by.css('[title="Duplicate"]'))).toBe(false);
                 });
-    });
+        }
+    );
 
     it('can fetch from ingest with keyboards', function() {
         workspace.switchToDesk('SPORTS DESK').then(content.setListView);
@@ -115,15 +116,15 @@ describe('Fetch', function() {
         }).then(function() {
             return changeUrl('/#/workspace/content');
         }).then(function() {
-            return workspace.switchToDesk('SPORTS DESK');
+            return workspace.switchToDesk('PERSONAL');
         }).then(
             content.setListView
         );
         expect(element.all(by.repeater('items._items')).count()).toBe(3);
-        content.actionOnItem('Duplicate', 0).then(function() {
-            return workspace.switchToDesk('PERSONAL');
-        }).then(function() {
+        content.actionOnItem('Copy', 0).then(function() {
             return workspace.switchToDesk('SPORTS DESK');
+        }).then(function() {
+            return workspace.switchToDesk('PERSONAL');
         });
         expect(element.all(by.repeater('items._items')).count()).toBe(4);
     });

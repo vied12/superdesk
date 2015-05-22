@@ -21,6 +21,12 @@ define(['lodash'], function(_) {
             if (!$location.search()._id) {
                 $scope.selected.preview = null;
             }
+            if ($location.search().fetch) {
+                self.fetchItem(decodeURIComponent($location.search().fetch))
+                .then(function() {
+                    $scope.selected.preview = null;
+                });
+            }
         });
 
         this.buildQuery = function(params, filterDesk) {
@@ -51,8 +57,12 @@ define(['lodash'], function(_) {
             console.log('no api defined');
         };
 
+        this.fetchItem = function(id) {
+            console.log('no api defined');
+        };
+
         this.refresh = function refresh(filterDesk) {
-        	var query = self.getQuery(_.omit($location.search(), '_id'), filterDesk);
+            var query = self.getQuery(_.omit($location.search(), '_id'), filterDesk);
             self.fetchItems({source: query});
         };
     }
