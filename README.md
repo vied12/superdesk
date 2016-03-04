@@ -40,3 +40,4 @@ If you're going to assign some hostname to the instance, you should also set it 
 
 For manual installation just follow the steps described in the [Dockerfile](./Dockerfile).
 blah
+blah
