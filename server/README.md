@@ -37,7 +37,7 @@ For image processing you will need some extra packages:
 ## CI
 
 Use nosetests for unit tests:
-
+coucou
 ```sh
 $ nosetests
 ```
